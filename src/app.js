@@ -198,6 +198,8 @@ let currentContractName = "";
 let contractViewerExpanded = false;
 let savedContractSeq = 1;
 const savedContracts = new Map();
+let originalDocHtml = null;   // snapshot before first suggestion applied
+let compareModeActive = false;
 
 function buildChatSystemPrompt() {
   const responseLanguage = getResponseLanguageLabel();
@@ -437,8 +439,12 @@ function refreshDynamicLocalizedSections() {
 function updateContractViewerToggleLabel() {
   const btn = document.getElementById('contract-expand-btn');
   const modalCloseBtn = document.getElementById('contract-modal-close');
-  const key = contractViewerExpanded ? 'viewer.collapse' : 'viewer.expand';
-  if (btn) btn.textContent = t(key);
+  if (btn) {
+    btn.title = contractViewerExpanded ? t('viewer.collapse') : t('viewer.expand');
+    btn.innerHTML = contractViewerExpanded
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+  }
   if (modalCloseBtn) modalCloseBtn.textContent = t('viewer.collapse');
 }
 
@@ -461,6 +467,13 @@ function syncContractViewerModal() {
   dst.id = 'contract-modal-doc';
   dst.innerHTML = src.innerHTML;
   if (title && modalTitle) modalTitle.textContent = title.textContent;
+
+  // Show compare button if original was snapshotted
+  const compareBtn = document.getElementById('compare-toggle-btn');
+  if (compareBtn) compareBtn.style.display = originalDocHtml ? 'inline-flex' : 'none';
+
+  // If compare mode is active, refresh both columns too
+  if (compareModeActive) refreshCompareColumns();
 }
 
 function openContractViewerModal() {
@@ -470,6 +483,9 @@ function openContractViewerModal() {
   modal.classList.add('open');
   document.body.classList.add('no-scroll');
   syncContractViewerModal();
+  // Show compare button if applicable
+  const compareBtn = document.getElementById('compare-toggle-btn');
+  if (compareBtn) compareBtn.style.display = originalDocHtml ? 'inline-flex' : 'none';
   const modalDoc = document.getElementById('contract-modal-doc');
   if (modalDoc) modalDoc.scrollTop = 0;
   updateContractViewerToggleLabel();
@@ -481,6 +497,41 @@ function closeContractViewerModal() {
   if (modal) modal.classList.remove('open');
   document.body.classList.remove('no-scroll');
   updateContractViewerToggleLabel();
+  // Exit compare mode when closing
+  if (compareModeActive) {
+    compareModeActive = false;
+    const compareView = document.getElementById('contract-modal-compare');
+    const mainDoc = document.getElementById('contract-modal-doc');
+    if (compareView) compareView.style.display = 'none';
+    if (mainDoc) mainDoc.style.display = '';
+    const compareBtn = document.getElementById('compare-toggle-btn');
+    if (compareBtn) compareBtn.textContent = '\u21d4 Kar\u015f\u0131la\u015ft\u0131r';
+  }
+}
+
+function toggleCompareMode() {
+  compareModeActive = !compareModeActive;
+  const compareView = document.getElementById('contract-modal-compare');
+  const mainDoc = document.getElementById('contract-modal-doc');
+  const compareBtn = document.getElementById('compare-toggle-btn');
+  if (compareModeActive) {
+    refreshCompareColumns();
+    if (compareView) compareView.style.display = 'flex';
+    if (mainDoc) mainDoc.style.display = 'none';
+    if (compareBtn) compareBtn.textContent = '\u2715 Tek G\u00f6r\u00fcn\u00fcm';
+  } else {
+    if (compareView) compareView.style.display = 'none';
+    if (mainDoc) mainDoc.style.display = '';
+    if (compareBtn) compareBtn.textContent = '\u21d4 Kar\u015f\u0131la\u015ft\u0131r';
+  }
+}
+
+function refreshCompareColumns() {
+  const beforeEl = document.getElementById('compare-doc-before');
+  const afterEl  = document.getElementById('compare-doc-after');
+  const currentSrc = document.getElementById('contract-doc');
+  if (beforeEl && originalDocHtml !== null) beforeEl.innerHTML = originalDocHtml;
+  if (afterEl  && currentSrc)              afterEl.innerHTML  = currentSrc.innerHTML;
 }
 
 function getSystemTheme() {
@@ -1516,6 +1567,11 @@ function applySuggestionToDocument(suggestion) {
   const docEl = document.getElementById('contract-doc');
   if (!docEl) return;
 
+  // Snapshot original before first edit
+  if (!originalDocHtml) {
+    originalDocHtml = docEl.innerHTML;
+  }
+
   const combined = `${suggestion?.title || ''} ${suggestion?.body || ''}`.toLowerCase();
   if (/(gizlilik|confidential)/i.test(combined)) {
     replaceFirstRegexInTextNodes(docEl, /\b2\s*(yıl|years?)\b/i, currentLang === 'tr' ? '5 yıl' : '5 years');
@@ -1536,6 +1592,16 @@ function renderAnalysis(filename, analysis, options = {}) {
   const issueCount  = analysis.issues?.length      || 0;
   const sugCount    = analysis.suggestions?.length  || 0;
   currentContractName = filename;
+
+  // Hide upload zone, expand viewer
+  const mainArea = document.getElementById('main-area');
+  if (mainArea) mainArea.classList.add('has-contract');
+  const uploadZone = document.getElementById('upload-zone');
+  if (uploadZone) uploadZone.style.display = 'none';
+
+  // Reset compare state for new contract
+  originalDocHtml = null;
+  compareModeActive = false;
 
   // -- Contract section title --
   const titleEl = document.querySelector('[data-i18n="section.contract"]');

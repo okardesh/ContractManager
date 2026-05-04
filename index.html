@@ -91,16 +91,6 @@
     <!-- Main -->
     <main class="main" id="main-area">
 
-      <!-- Upload zone -->
-      <div class="upload-zone" onclick="triggerUpload()" id="upload-zone">
-        <div class="upload-icon">📄</div>
-        <div class="upload-title" data-i18n="upload.title">Drop a contract to analyze</div>
-        <div class="upload-sub" data-i18n="upload.sub">PDF, DOCX, or TXT · AI analyzes in seconds</div>
-        <button class="analyze-btn" onclick="event.stopPropagation(); triggerUpload()" data-i18n="upload.btn">
-          ↑ Upload Contract
-        </button>
-      </div>
-
       <!-- Stats -->
       <div class="section-title" data-i18n="section.overview">Overview</div>
       <div class="stats-grid">
@@ -126,12 +116,29 @@
         </div>
       </div>
 
+      <!-- Upload zone -->
+      <div class="upload-zone" onclick="triggerUpload()" id="upload-zone">
+        <div class="upload-icon">📄</div>
+        <div class="upload-title" data-i18n="upload.title">Drop a contract to analyze</div>
+        <div class="upload-sub" data-i18n="upload.sub">PDF, DOCX, or TXT · AI analyzes in seconds</div>
+        <button class="analyze-btn" onclick="event.stopPropagation(); triggerUpload()" data-i18n="upload.btn">
+          ↑ Upload Contract
+        </button>
+      </div>
+
       <!-- Contract preview -->
       <div class="section-title-row">
         <div class="section-title" data-i18n="section.contract">Current Contract — Vendor Agreement, Acme Corp</div>
-        <button class="btn-sm viewer-toggle-btn" id="contract-expand-btn" onclick="toggleContractViewer()" data-i18n="viewer.expand">Expand</button>
       </div>
       <div class="contract-viewer">
+        <button class="viewer-expand-icon" id="contract-expand-btn" onclick="toggleContractViewer()" title="Genişlet">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/>
+            <polyline points="9 21 3 21 3 15"/>
+            <line x1="21" y1="3" x2="14" y2="10"/>
+            <line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
         <div class="contract-doc" id="contract-doc">
           <strong>VENDOR SERVICES AGREEMENT</strong><br><br>
           This Agreement is entered into as of <span class="highlight-warn" title="Date discrepancy">January 1, 2023</span> ("Effective Date") between Acme Corp ("Vendor") and ClientCo LLC ("Client").<br><br>
@@ -239,7 +246,20 @@
     <div class="contract-modal-content">
       <div class="contract-modal-header">
         <div class="contract-modal-title" data-i18n="section.contract">Mevcut Sözleşme</div>
-        <button class="btn-sm" id="contract-modal-close" onclick="closeContractViewerModal()" data-i18n="viewer.collapse">Daralt</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn-sm" id="compare-toggle-btn" onclick="toggleCompareMode()" style="display:none;">⇔ Karşılaştır</button>
+          <button class="btn-sm" id="contract-modal-close" onclick="closeContractViewerModal()" data-i18n="viewer.collapse">Daralt</button>
+        </div>
+      </div>
+      <div id="contract-modal-compare" class="modal-compare-view" style="display:none;">
+        <div class="compare-col">
+          <div class="compare-label">Orijinal</div>
+          <div class="contract-doc" id="compare-doc-before"></div>
+        </div>
+        <div class="compare-col">
+          <div class="compare-label">Değiştirilmiş</div>
+          <div class="contract-doc" id="compare-doc-after"></div>
+        </div>
       </div>
       <div class="contract-doc" id="contract-modal-doc"></div>
     </div>
