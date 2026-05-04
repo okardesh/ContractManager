@@ -1778,10 +1778,6 @@ async function handleFileUpload(event) {
   if (mainArea) mainArea.classList.add('has-contract');
 
   // Show loading state in viewer and scroll it into view
-  const docEl = document.getElementById('contract-doc');
-  if (docEl) {
-    docEl.innerHTML = `<div class="viewer-loading"><div class="viewer-loading-spinner"></div><span>${currentLang === 'tr' ? 'Sözleşme yükleniyor…' : 'Loading contract…'}</span></div>`;
-  }
   const viewerSection = document.querySelector('.contract-viewer');
   if (viewerSection) viewerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -1798,6 +1794,11 @@ async function handleFileUpload(event) {
     currentContractHtml = payload.html || '';
     currentContractDocxBuffer = payload.docxBuffer || null;
     chatHistory = [];
+
+    // Render document immediately — don't wait for AI
+    const titleEl = document.querySelector('[data-i18n="section.contract"]');
+    if (titleEl) titleEl.textContent = formatDynamicContractTitle(name);
+    await renderContractDocument(name);
 
     const analysis = await analyzeContractWithLLM(text, file.name);
     currentAnalysis = analysis;
