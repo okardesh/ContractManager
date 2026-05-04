@@ -1,0 +1,38 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build",
+			"type": "shell",
+			"command": "echo",
+			"args": [
+				"No build step required for this static HTML/CSS/JS project."
+			],
+			"group": "build"
+		},
+		{
+			"label": "run",
+			"type": "shell",
+			"command": "python3",
+			"args": [
+				"-m",
+				"http.server",
+				"3000"
+			],
+			"isBackground": true,
+			"group": "test"
+		},
+		{
+			"label": "run",
+			"type": "shell",
+			"command": "python3",
+			"args": [
+				"-m",
+				"http.server",
+				"3001"
+			],
+			"isBackground": true,
+			"group": "test"
+		}
+	]
+}
