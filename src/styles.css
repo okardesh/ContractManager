@@ -59,20 +59,17 @@ body {
   padding: 0 24px;
   gap: 12px;
 }
-.logo-icon {
-  width: 28px; height: 28px;
-  background: var(--accent-dark);
-  border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
+.logo-image {
+  height: 42px;
+  width: auto;
+  max-width: 220px;
+  object-fit: contain;
+  display: block;
 }
-.logo-icon svg { width: 16px; height: 16px; }
-.logo-text {
-  font-family: 'DM Serif Display', serif;
-  font-size: 18px;
-  letter-spacing: -0.3px;
-  color: var(--text-primary);
+/* Invert only the dark parts of the SVG in dark mode, preserve the gradient */
+body.theme-dark .logo-image {
+  filter: invert(1) hue-rotate(180deg);
 }
-.logo-text span { color: var(--accent); }
 .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
 /* ---- Language switch ---- */

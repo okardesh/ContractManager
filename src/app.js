@@ -1094,6 +1094,8 @@ function ensureAnalysisCompleteness(analysis, text, filename) {
   };
 
   const fallback = buildDeterministicFallbackAnalysis(text, filename);
+  const target = targetCountsForText(text);
+  const expanded = buildExpandedDeterministicFallback(text, filename);
 
   if (normalized.issues.length === 0) {
     normalized.issues = fallback.issues.slice(0, 1);
@@ -1104,16 +1106,167 @@ function ensureAnalysisCompleteness(analysis, text, filename) {
   if (!normalized.summary) normalized.summary = fallback.summary;
   if (!normalized.initialMessage) normalized.initialMessage = fallback.initialMessage;
 
+  const issueKeys = new Set(normalized.issues.map(i => i.text.toLowerCase().replace(/\W+/g, ' ').trim()));
+  for (const issue of expanded.issues) {
+    if (normalized.issues.length >= target.issues) break;
+    const key = String(issue.text || '').toLowerCase().replace(/\W+/g, ' ').trim();
+    if (!key || issueKeys.has(key)) continue;
+    issueKeys.add(key);
+    normalized.issues.push(issue);
+  }
+
+  const sugKeys = new Set(normalized.suggestions.map(s => `${s.title} ${s.body}`.toLowerCase().replace(/\W+/g, ' ').trim()));
+  for (const sug of expanded.suggestions) {
+    if (normalized.suggestions.length >= target.suggestions) break;
+    const key = `${sug.title} ${sug.body}`.toLowerCase().replace(/\W+/g, ' ').trim();
+    if (!key || sugKeys.has(key)) continue;
+    sugKeys.add(key);
+    normalized.suggestions.push(sug);
+  }
+
   return normalizeAnalysisTextFields(normalized);
 }
 
-async function analyzeContractWithLLM(text, filename) {
-  // Keep text within context budget: ~4000 chars ≈ 1000 tokens, leave room for system prompt + response
-  const contractSnippet = text.slice(0, 5000);
+function targetCountsForText(text) {
+  const n = String(text || '').length;
+  if (n > 120000) return { issues: 14, suggestions: 10 };
+  if (n > 70000) return { issues: 10, suggestions: 8 };
+  if (n > 30000) return { issues: 8, suggestions: 6 };
+  if (n > 15000) return { issues: 6, suggestions: 4 };
+  return { issues: 4, suggestions: 3 };
+}
+
+function buildExpandedDeterministicFallback(text, filename) {
+  const base = buildDeterministicFallbackAnalysis(text, filename);
+  const tr = currentLang === 'tr';
+  const src = String(text || '').toLowerCase();
+
+  const candidates = {
+    issues: [
+      {
+        severity: 'medium',
+        text: tr ? 'Yetkili mahkeme ve uygulanacak hukuk açık değil olabilir.' : 'Governing law and jurisdiction may not be clearly defined.',
+        location: tr ? 'Uyuşmazlık çözümü maddesi' : 'Dispute resolution clause',
+        tag: 'Missing',
+      },
+      {
+        severity: 'medium',
+        text: tr ? 'Fesih koşulları ve bildirim süreleri dengesiz veya belirsiz olabilir.' : 'Termination conditions and notice periods may be imbalanced or unclear.',
+        location: tr ? 'Fesih maddeleri' : 'Termination clauses',
+        tag: 'Risk',
+      },
+      {
+        severity: 'low',
+        text: tr ? 'Değişiklik yönetimi ve versiyonlama süreci net tanımlanmamış olabilir.' : 'Change management and versioning process may be under-defined.',
+        location: tr ? 'Değişiklik / kapsam maddeleri' : 'Change/scope clauses',
+        tag: 'Inaccuracy',
+      },
+      {
+        severity: 'medium',
+        text: tr ? 'Veri koruma ve gizlilik yükümlülükleri teknik/operasyonel detay açısından yetersiz olabilir.' : 'Data protection and confidentiality obligations may lack operational detail.',
+        location: tr ? 'Veri koruma maddeleri' : 'Data protection clauses',
+        tag: 'Risk',
+      },
+      {
+        severity: 'medium',
+        text: tr ? 'Kabul kriterleri ve teslim koşulları ölçülebilir şekilde tanımlanmamış olabilir.' : 'Acceptance criteria and delivery conditions may not be measurable enough.',
+        location: tr ? 'Teslim / kabul maddeleri' : 'Delivery/acceptance clauses',
+        tag: 'Missing',
+      },
+    ],
+    suggestions: [
+      {
+        title: tr ? 'Uyuşmazlık çözümü maddesini netleştirin' : 'Clarify dispute resolution terms',
+        body: tr ? 'Uygulanacak hukuk, yetkili mahkeme ve arabuluculuk/tahkim adımlarını açıkça yazın.' : 'Specify governing law, venue, and mediation/arbitration sequence explicitly.',
+      },
+      {
+        title: tr ? 'Fesih ve bildirim hükümlerini dengeleyin' : 'Balance termination and notice provisions',
+        body: tr ? 'Her iki taraf için simetrik bildirim süresi ve haklı fesih nedenleri tanımlayın.' : 'Define symmetric notice periods and justified termination grounds for both parties.',
+      },
+      {
+        title: tr ? 'Teslim ve kabul kriterlerini ölçülebilir hale getirin' : 'Make delivery/acceptance criteria measurable',
+        body: tr ? 'KPI, test senaryosu ve onay süresi gibi kriterleri sözleşmeye ekleyin.' : 'Add KPI, test scenarios, and acceptance timeline to the contract.',
+      },
+      {
+        title: tr ? 'Veri güvenliği ekini güçlendirin' : 'Strengthen data security appendix',
+        body: tr ? 'Erişim kontrolü, loglama, ihlal bildirimi ve saklama sürelerini netleştirin.' : 'Clarify access control, logging, breach notification, and retention periods.',
+      },
+    ],
+  };
+
+  if (/(jurisdiction|mahkeme|hukuk|law|dispute|uyuşmazlık)/i.test(src)) {
+    candidates.issues.unshift({
+      severity: 'high',
+      text: tr ? 'Uyuşmazlık çözümü maddelerinde taraflar arasında yorum farklılığı riski var.' : 'Dispute resolution wording may allow conflicting interpretations between parties.',
+      location: tr ? 'Uyuşmazlık çözümü maddesi' : 'Dispute resolution clause',
+      tag: 'Inaccuracy',
+    });
+  }
+
+  return {
+    ...base,
+    issues: [...base.issues, ...candidates.issues],
+    suggestions: [...base.suggestions, ...candidates.suggestions],
+  };
+}
+
+function splitContractIntoChunks(text, chunkSize = 5500, maxChunks = 4) {
+  const src = String(text || '');
+  if (src.length <= chunkSize) return [src];
+  const chunks = [];
+  const step = Math.max(1, Math.floor((src.length - chunkSize) / (maxChunks - 1)));
+  for (let i = 0; i < maxChunks; i++) {
+    const start = i * step;
+    const chunk = src.slice(start, start + chunkSize);
+    if (chunk.trim()) chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function mergeAnalyses(analyses, filename) {
+  const tr = currentLang === 'tr';
+  const merged = {
+    summary: analyses[0]?.summary || '',
+    issues: [],
+    suggestions: [],
+    initialMessage: analyses[0]?.initialMessage || '',
+  };
+
+  const issueKeys = new Set();
+  const sugKeys = new Set();
+
+  for (const a of analyses) {
+    for (const i of (a?.issues || [])) {
+      const key = String(i?.text || '').toLowerCase().replace(/\W+/g, ' ').trim();
+      if (!key || issueKeys.has(key)) continue;
+      issueKeys.add(key);
+      merged.issues.push(i);
+    }
+    for (const s of (a?.suggestions || [])) {
+      const key = `${s?.title || ''} ${s?.body || ''}`.toLowerCase().replace(/\W+/g, ' ').trim();
+      if (!key || sugKeys.has(key)) continue;
+      sugKeys.add(key);
+      merged.suggestions.push(s);
+    }
+  }
+
+  if (!merged.summary) {
+    merged.summary = tr
+      ? `${filename} için çok bölümlü analiz tamamlandı.`
+      : `Multi-section analysis completed for ${filename}.`;
+  }
+  merged.initialMessage = tr
+    ? `**Analiz tamamlandı.** ${merged.issues.length} risk/sorun ve ${merged.suggestions.length} öneri tespit edildi.`
+    : `**Analysis complete.** Found ${merged.issues.length} issues/risks and ${merged.suggestions.length} suggestions.`;
+
+  return merged;
+}
+
+async function analyzeSnippetWithLLM(contractSnippet, filename, label = '') {
   const rawText = await ollamaChat(
     buildAnalysisSystemPrompt(),
-    [{ role: "user", content: `Analyze this contract:\n\nFilename: ${filename}\n\n${contractSnippet}` }],
-    1200
+    [{ role: "user", content: `Analyze this contract ${label ? `(${label})` : ''}:\n\nFilename: ${filename}\n\nMinimum target for this part: find at least 3 issues and 2 suggestions when possible.\n\n${contractSnippet}` }],
+    1500
   );
 
   try {
@@ -1132,11 +1285,24 @@ async function analyzeContractWithLLM(text, filename) {
         const localized = await enforceStrictTurkishAnalysisLanguage(await translateAnalysisToCurrentLang(fallback, true));
         return ensureAnalysisCompleteness(localized, contractSnippet, filename);
       } catch (fallbackErr) {
-        console.error('Analysis pipeline failed, using deterministic fallback.', { err, repairErr, fallbackErr });
-        return buildDeterministicFallbackAnalysis(contractSnippet, filename);
+        console.error('Chunk analysis failed, using deterministic fallback.', { err, repairErr, fallbackErr });
+        return buildExpandedDeterministicFallback(contractSnippet, filename);
       }
     }
   }
+}
+
+async function analyzeContractWithLLM(text, filename) {
+  const contractText = String(text || '');
+  const chunks = splitContractIntoChunks(contractText, 5500, contractText.length > 70000 ? 5 : 4);
+  const analyses = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkAnalysis = await analyzeSnippetWithLLM(chunks[i], filename, `part ${i + 1}/${chunks.length}`);
+    analyses.push(chunkAnalysis);
+  }
+
+  const merged = mergeAnalyses(analyses, filename);
+  return ensureAnalysisCompleteness(merged, contractText, filename);
 }
 
 function localizeTag(tag) {
