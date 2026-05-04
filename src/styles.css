@@ -346,6 +346,25 @@ body.theme-dark .logo-image {
 .has-contract .contract-doc {
   max-height: min(55vh, 600px);
 }
+.viewer-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+.viewer-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border-mid);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .contract-doc.is-docx {
   padding: 10px;
   background: var(--bg-secondary);

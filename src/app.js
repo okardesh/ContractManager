@@ -1771,6 +1771,20 @@ async function handleFileUpload(event) {
   if (!file) return;
   event.target.value = ''; // allow re-uploading the same file
 
+  // Hide upload zone immediately and show viewer area
+  const uploadZone = document.getElementById('upload-zone');
+  if (uploadZone) uploadZone.style.display = 'none';
+  const mainArea = document.getElementById('main-area');
+  if (mainArea) mainArea.classList.add('has-contract');
+
+  // Show loading state in viewer and scroll it into view
+  const docEl = document.getElementById('contract-doc');
+  if (docEl) {
+    docEl.innerHTML = `<div class="viewer-loading"><div class="viewer-loading-spinner"></div><span>${currentLang === 'tr' ? 'Sözleşme yükleniyor…' : 'Loading contract…'}</span></div>`;
+  }
+  const viewerSection = document.querySelector('.contract-viewer');
+  if (viewerSection) viewerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   const name = file.name.replace(/\.[^.]+$/, "");
   addMessage("user", t('msg.reading').replace('{name}', file.name));
   setLoading(true);
