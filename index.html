@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -27,9 +27,9 @@
       <span class="logo-text">Clause<span>AI</span></span>
       <div class="header-actions">
         <div class="lang-switch">
-          <span onclick="setLang('en')" id="lang-en" class="lang-opt active">EN</span>
+          <span onclick="setLang('en')" id="lang-en" class="lang-opt">EN</span>
           <span class="lang-sep">|</span>
-          <span onclick="setLang('tr')" id="lang-tr" class="lang-opt">TR</span>
+          <span onclick="setLang('tr')" id="lang-tr" class="lang-opt active">TR</span>
         </div>
         <div class="theme-switch" role="group" aria-label="Theme">
           <button class="theme-opt" id="theme-light" onclick="setThemePreference('light')" aria-label="Light Mode" title="Light Mode">
@@ -137,7 +137,10 @@
       </div>
 
       <!-- Contract preview -->
-      <div class="section-title" data-i18n="section.contract">Current Contract — Vendor Agreement, Acme Corp</div>
+      <div class="section-title-row">
+        <div class="section-title" data-i18n="section.contract">Current Contract — Vendor Agreement, Acme Corp</div>
+        <button class="btn-sm viewer-toggle-btn" id="contract-expand-btn" onclick="toggleContractViewer()" data-i18n="viewer.expand">Expand</button>
+      </div>
       <div class="contract-viewer">
         <div class="contract-doc" id="contract-doc">
           <strong>VENDOR SERVICES AGREEMENT</strong><br><br>
@@ -242,6 +245,16 @@
     </main>
   </div>
 
+  <div class="contract-modal" id="contract-modal" onclick="if(event.target===this) closeContractViewerModal()">
+    <div class="contract-modal-content">
+      <div class="contract-modal-header">
+        <div class="contract-modal-title" data-i18n="section.contract">Mevcut Sözleşme</div>
+        <button class="btn-sm" id="contract-modal-close" onclick="closeContractViewerModal()" data-i18n="viewer.collapse">Daralt</button>
+      </div>
+      <div class="contract-doc" id="contract-modal-doc"></div>
+    </div>
+  </div>
+
   <!-- PDF and DOCX parsing libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
@@ -251,6 +264,8 @@
     }
   </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://unpkg.com/docx-preview@0.3.3/dist/docx-preview.min.js"></script>
   <script src="src/app.js"></script>
 </body>
 </html>
