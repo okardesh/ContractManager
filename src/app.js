@@ -4,8 +4,14 @@
 
 // Ollama local endpoint — make sure `ollama serve` is running
 const OLLAMA_BASE  = "http://localhost:11434/v1";
-const OLLAMA_MODEL = "llama3";
-const OLLAMA_CTX   = 8192; // context window tokens
+let   OLLAMA_MODEL = "qwen2.5:3b";
+const OLLAMA_CTX   = 4096; // context window — reduced for faster inference
+const OLLAMA_CTX_ANALYSIS = 3072; // tighter window used during contract analysis
+
+function setOllamaModel(model) {
+  OLLAMA_MODEL = model;
+  localStorage.setItem('clauseai-model', model);
+}
 
 // ===========================
 //  App State
@@ -229,6 +235,7 @@ ${suggestions}`;
 
 const TRANSLATIONS = {
   en: {
+    'model.label': 'Model',
     'btn.archive': 'Archive',
     'btn.newContract': '+ New Contract',
     'theme.dark': 'Dark Mode',
@@ -285,8 +292,37 @@ const TRANSLATIONS = {
     'suggestions.none': 'No suggestions at this time.',
     'msg.switch.clean': 'Switched to "{name}". This contract looks clean — no critical issues detected.',
     'msg.switch.issues': 'Switched to "{name}". Found {n} issue{s} in this contract. Ask me for details.',
+    'sev.high': 'High',
+    'sev.medium': 'Medium',
+    'sev.low': 'Low',
+    'view.analyze.title': 'Contract Analysis',
+    'view.analyze.subtitle': 'Load a contract to see detailed issues',
+    'view.analyze.archive': 'Archive Contract',
+    'view.analyze.archived': 'Archived!',
+    'view.analyze.download': '↓ Download',
+    'view.analyze.editDoc': 'Edit Document',
+    'view.analyze.editable': 'Editable',
+    'view.analyze.empty': 'No contract loaded',
+    'view.analyze.emptySub': 'Upload a contract or select one from the sidebar to view detailed analysis.',
+    'view.archive.title': 'Archive',
+    'view.archive.subtitle': 'Archived contracts with full document viewer',
+    'view.archive.empty': 'No archived contracts yet',
+    'view.archive.emptySub': 'Archive contracts from the Analyze view to find them here.',
+    'view.archive.archivedOn': 'Archived {date}',
+    'view.archive.download': '↓ Download',
+    'view.archive.close': '✕',
+    'view.suggestions.title': 'Recommendations',
+    'view.suggestions.subtitle': 'Detailed AI recommendations for the current contract',
+    'view.suggestions.empty': 'No recommendations yet',
+    'view.suggestions.emptySub': 'Upload a contract to get AI-powered recommendations.',
+    'view.suggestions.applyAll': 'Apply All',
+    'view.suggestions.download': '↓ Download Modified',
+    'view.suggestions.compareTitle': 'Before / After',
+    'view.suggestions.before': 'Original',
+    'view.suggestions.after': 'Modified',
   },
   tr: {
+    'model.label': 'Model',
     'btn.archive': 'Arşiv',
     'btn.newContract': '+ Yeni Sözleşme',
     'theme.dark': 'Karanlık Mod',
@@ -343,6 +379,34 @@ const TRANSLATIONS = {
     'suggestions.none': 'Şu an için öneri yok.',
     'msg.switch.clean': '"{name}" sözleşmesine geçildi. Bu sözleşme temiz görünüyor — kritik sorun tespit edilmedi.',
     'msg.switch.issues': '"{name}" sözleşmesine geçildi. Bu sözleşmede {n} sorun bulundu{s}. Detayları sorabilirsiniz.',
+    'sev.high': 'Yüksek',
+    'sev.medium': 'Orta',
+    'sev.low': 'Düşük',
+    'view.analyze.title': 'Sözleşme Analizi',
+    'view.analyze.subtitle': 'Ayrıntılı sorunları görmek için bir sözleşme yükleyin',
+    'view.analyze.archive': 'Arşivle',
+    'view.analyze.archived': 'Arşivlendi!',
+    'view.analyze.download': '↓ İndir',
+    'view.analyze.editDoc': 'Belgeyi Düzenle',
+    'view.analyze.editable': 'Düzenlenebilir',
+    'view.analyze.empty': 'Sözleşme yüklenmedi',
+    'view.analyze.emptySub': 'Ayrıntılı analiz için bir sözleşme yükleyin veya kenar çubuğundan seçin.',
+    'view.archive.title': 'Arşiv',
+    'view.archive.subtitle': 'Arşivlenmiş sözleşmeler ve belge görüntüleyici',
+    'view.archive.empty': 'Henüz arşivlenmiş sözleşme yok',
+    'view.archive.emptySub': 'Sözleşmeleri Analiz görünümünden arşivleyerek buraya ekleyebilirsiniz.',
+    'view.archive.archivedOn': '{date} tarihinde arşivlendi',
+    'view.archive.download': '↓ İndir',
+    'view.archive.close': '✕',
+    'view.suggestions.title': 'Öneriler',
+    'view.suggestions.subtitle': 'Mevcut sözleşme için ayrıntılı yapay zeka önerileri',
+    'view.suggestions.empty': 'Henüz öneri yok',
+    'view.suggestions.emptySub': 'Yapay zeka önerileri almak için bir sözleşme yükleyin.',
+    'view.suggestions.applyAll': 'Tümünü Uygula',
+    'view.suggestions.download': '↓ Değiştirilmiş Sözleşmeyi İndir',
+    'view.suggestions.compareTitle': 'Önce / Sonra',
+    'view.suggestions.before': 'Orijinal',
+    'view.suggestions.after': 'Değiştirilmiş',
   }
 };
 
@@ -657,14 +721,14 @@ async function readDocxAsText(file) {
 //  Ollama API helper
 // ===========================
 
-async function ollamaChat(systemPrompt, messages, maxTokens = 1024) {
+async function ollamaChat(systemPrompt, messages, maxTokens = 1024, ctx = OLLAMA_CTX) {
   const res = await fetch(`${OLLAMA_BASE}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: OLLAMA_MODEL,
       stream: false,
-      options: { num_ctx: OLLAMA_CTX },
+      options: { num_ctx: ctx },
       max_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
@@ -1317,7 +1381,8 @@ async function analyzeSnippetWithLLM(contractSnippet, filename, label = '') {
   const rawText = await ollamaChat(
     buildAnalysisSystemPrompt(),
     [{ role: "user", content: `Analyze this contract ${label ? `(${label})` : ''}:\n\nFilename: ${filename}\n\nMinimum target for this part: find at least 3 issues and 2 suggestions when possible.\n\n${contractSnippet}` }],
-    1500
+    1024,
+    OLLAMA_CTX_ANALYSIS
   );
 
   try {
@@ -1345,12 +1410,14 @@ async function analyzeSnippetWithLLM(contractSnippet, filename, label = '') {
 
 async function analyzeContractWithLLM(text, filename) {
   const contractText = String(text || '');
-  const chunks = splitContractIntoChunks(contractText, 5500, contractText.length > 70000 ? 5 : 4);
-  const analyses = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkAnalysis = await analyzeSnippetWithLLM(chunks[i], filename, `part ${i + 1}/${chunks.length}`);
-    analyses.push(chunkAnalysis);
-  }
+  // Use a single large chunk for typical contracts; only split very large docs.
+  // Chunks are analyzed in parallel (Promise.all) for max speed.
+  const maxChunks = contractText.length > 80000 ? 3 : contractText.length > 25000 ? 2 : 1;
+  const chunks = splitContractIntoChunks(contractText, 6000, maxChunks);
+
+  const analyses = await Promise.all(
+    chunks.map((chunk, i) => analyzeSnippetWithLLM(chunk, filename, chunks.length > 1 ? `part ${i + 1}/${chunks.length}` : ''))
+  );
 
   const merged = mergeAnalyses(analyses, filename);
   return ensureAnalysisCompleteness(merged, contractText, filename);
@@ -1545,10 +1612,196 @@ function focusIssue(index) {
 
   const rootId = contractViewerExpanded ? '#contract-modal-doc' : '#contract-doc';
   const anchor = document.querySelector(`${rootId} [data-issue-anchor="${index}"]`);
+  // Scroll the contract viewer section into view first
+  const viewer = document.querySelector('.contract-viewer');
+  if (viewer && !contractViewerExpanded) viewer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   if (!anchor) return;
-  anchor.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  anchor.classList.add('focused');
-  setTimeout(() => anchor.classList.remove('focused'), 1200);
+  setTimeout(() => {
+    anchor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    anchor.classList.add('focused');
+    setTimeout(() => anchor.classList.remove('focused'), 1400);
+  }, viewer && !contractViewerExpanded ? 320 : 0);
+}
+
+function focusAnalyzeIssue(idx) {
+  // Highlight the card
+  document.querySelectorAll('#analyze-issues-list .issue-detail-card').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+  const issue = currentAnalysis?.issues?.[idx];
+  if (!issue) return;
+
+  const canvasEl = document.getElementById('analyze-doc-canvas');
+  const richEditor = document.getElementById('analyze-doc-rich');
+  const isCanvasVisible = canvasEl && canvasEl.style.display !== 'none';
+  const isRichVisible   = richEditor && richEditor.style.display !== 'none';
+
+  const docTarget = isCanvasVisible ? canvasEl : isRichVisible ? richEditor : null;
+  if (docTarget) {
+    docTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const queries = [
+      String(issue.location || '').replace(/^(clause|madde|section|bölüm)\s*/i, '').trim(),
+      String(issue.text || '').split(/[.,;:]/)[0].trim().slice(0, 80),
+    ].filter(q => q.length > 2);
+    for (const q of queries) {
+      if (highlightAndScrollTextIn(docTarget, q)) return;
+    }
+    if (!isCanvasVisible) docTarget.focus();
+    return;
+  }
+
+  const editor = document.getElementById('analyze-doc-editor');
+  if (!editor) return;
+  // Ensure the text area is visible on smaller screens before internal scroll.
+  editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const tryFindPos = (source, query) => {
+    const q = String(query || '').trim();
+    if (!q) return -1;
+    const candidates = [
+      q,
+      q.replace(/[.,;:()\[\]{}"']/g, ' ').replace(/\s+/g, ' ').trim(),
+      q.split(/\s+/).filter(w => w.length > 3).slice(0, 4).join(' '),
+      q.split(/\s+/).filter(w => w.length > 4)[0] || '',
+    ].filter(Boolean);
+    const lowerSource = String(source || '').toLowerCase();
+    for (const c of candidates) {
+      const pos = lowerSource.indexOf(c.toLowerCase());
+      if (pos !== -1) return pos;
+    }
+    return -1;
+  };
+
+  // Try location string first, then first words of issue text
+  const queries = [
+    String(issue.location || '').replace(/^(clause|madde|section|bölüm)\s*/i, '').trim(),
+    String(issue.text || '').split(/[.,;:]/)[0].trim().slice(0, 60),
+  ].filter(q => q.length > 2);
+  const content = editor.value;
+  for (const q of queries) {
+    const pos = tryFindPos(content, q);
+    if (pos === -1) continue;
+    const linesBefore = content.slice(0, pos).split('\n').length;
+    const lh = parseFloat(getComputedStyle(editor).lineHeight) || 23;
+    editor.scrollTop = Math.max(0, (linesBefore - 3) * lh);
+    editor.focus();
+    editor.setSelectionRange(pos, Math.min(pos + q.length, content.length));
+    return;
+  }
+  // No match — just focus the editor
+  editor.focus();
+}
+
+function highlightAndScrollTextIn(root, query) {
+  if (!root || !query) return false;
+
+  const target = String(query).trim();
+  if (target.length < 3) return false;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.nodeValue && node.nodeValue.trim()
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const lowerTarget = target.toLowerCase();
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const value = node.nodeValue;
+    const lowerValue = value.toLowerCase();
+    const idx = lowerValue.indexOf(lowerTarget);
+    if (idx === -1) continue;
+
+    const before = value.slice(0, idx);
+    const match = value.slice(idx, idx + target.length);
+    const after = value.slice(idx + target.length);
+
+    const mark = document.createElement('span');
+    mark.className = 'text-scroll-hit';
+    mark.textContent = match;
+
+    const parent = node.parentNode;
+    if (!parent) return false;
+    if (before) parent.insertBefore(document.createTextNode(before), node);
+    parent.insertBefore(mark, node);
+    if (after) parent.insertBefore(document.createTextNode(after), node);
+    parent.removeChild(node);
+
+    mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => mark.classList.remove('text-scroll-hit'), 1800);
+    return true;
+  }
+  return false;
+}
+
+function focusSuggestionInView(idx) {
+  document.querySelectorAll('#suggestions-detail-list .sug-detail-card').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+
+  const sug = currentAnalysis?.suggestions?.[idx];
+  if (!sug) return;
+
+  updateSuggestionsCompare(true);
+
+  const compareEl = document.getElementById('suggestions-compare');
+  if (compareEl && compareEl.style.display !== 'none') {
+    compareEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  const afterPanel = document.getElementById('sug-compare-after');
+  const beforePanel = document.getElementById('sug-compare-before');
+  const applied = suggestionsAppliedSet.has(idx);
+
+  const queries = [
+    String(sug.title || '').trim(),
+    String(sug.body || '').split(/[.,;:]/)[0].trim().slice(0, 80),
+    ...String(sug.body || '').split(/\s+/).filter(w => w.length > 4).slice(0, 4),
+  ].filter(q => q.length > 2);
+
+  const targetPanel = applied ? (afterPanel || beforePanel) : (beforePanel || afterPanel);
+  if (!targetPanel) return;
+
+  if (applied) {
+    const note = targetPanel.querySelector(`[data-suggestion-anchor="${idx}"]`);
+    if (note) {
+      note.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      note.classList.add('flash-highlight');
+      setTimeout(() => note.classList.remove('flash-highlight'), 1800);
+      return;
+    }
+  }
+
+  for (const q of queries) {
+    if (highlightAndScrollTextIn(targetPanel, q)) return;
+  }
+}
+
+function buildEditableRichHtml() {
+  if (currentContractHtml && String(currentContractHtml).trim()) {
+    return `<div class="word-doc-body">${currentContractHtml}</div>`;
+  }
+  return `<pre class="plain-doc-body">${escapeHtml(currentContractText || '')}</pre>`;
+}
+
+function updateAnalyzeNavBadge() {
+  const badge = document.getElementById('nav-analyze-badge');
+  if (!badge) return;
+  const fallback = document.querySelectorAll('#issues-panel-body .issue-item').length;
+  const n = currentAnalysis?.issues?.length ?? fallback;
+  badge.textContent = String(n);
+  badge.style.display = n > 0 ? '' : 'none';
+}
+
+function updateSuggestionsNavBadge() {
+  const badge = document.getElementById('nav-suggestions-badge');
+  if (!badge) return;
+  const fallback = document.querySelectorAll('#suggestions-panel-body .suggestion-item').length;
+  const n = currentAnalysis?.suggestions?.length ?? fallback;
+  badge.textContent = String(n);
+  badge.style.display = n > 0 ? '' : 'none';
 }
 
 function replaceFirstRegexInTextNodes(root, pattern, replacement) {
@@ -1563,28 +1816,78 @@ function replaceFirstRegexInTextNodes(root, pattern, replacement) {
   return false;
 }
 
-function applySuggestionToDocument(suggestion) {
+// Use LLM to apply a suggestion to the current contract text.
+// Returns the modified text, or null on failure.
+async function applyWithLLM(suggestion) {
+  if (!currentContractText || currentContractText.trim().length < 30) return null;
+  const maxLen = 5500;
+  const src = currentContractText.length > maxLen
+    ? currentContractText.slice(0, maxLen) + '\n[...]'
+    : currentContractText;
+  try {
+    const result = await ollamaChat(
+      `You are a contract editor. Apply exactly the one suggestion below to the contract text. Return ONLY the modified full contract text — no explanation, no markdown fences, no preamble. Preserve all other clauses exactly.`,
+      [{ role: 'user', content: `SUGGESTION: ${suggestion.title}\nDETAIL: ${suggestion.body}\n\nCONTRACT TEXT:\n${src}` }],
+      2048,
+      OLLAMA_CTX
+    );
+    const trimmed = (result || '').trim();
+    if (trimmed.length < 30) return null;
+    // Strip accidental fences
+    return trimmed.replace(/^```[^\n]*\n?/,'').replace(/\n?```$/,'').trim();
+  } catch (err) {
+    console.warn('applyWithLLM failed:', err);
+    return null;
+  }
+}
+
+// Core apply: LLM-powered, with narrow-regex + annotation fallback.
+async function applyDocumentEdit(suggestion) {
   const docEl = document.getElementById('contract-doc');
   if (!docEl) return;
 
-  // Snapshot original before first edit
+  // Snapshot original BEFORE any changes
   if (!originalDocHtml) {
     originalDocHtml = docEl.innerHTML;
   }
 
-  const combined = `${suggestion?.title || ''} ${suggestion?.body || ''}`.toLowerCase();
-  if (/(gizlilik|confidential)/i.test(combined)) {
-    replaceFirstRegexInTextNodes(docEl, /\b2\s*(yıl|years?)\b/i, currentLang === 'tr' ? '5 yıl' : '5 years');
-  }
-  if (/(ödeme|payment|fee)/i.test(combined)) {
-    replaceFirstRegexInTextNodes(docEl, /\[(payment amount not specified|belirtilmemiş)\]/i, currentLang === 'tr' ? '[ÖDEME TUTARI EKLENDİ]' : '[PAYMENT AMOUNT ADDED]');
-  }
+  const modified = await applyWithLLM(suggestion);
 
-  const note = document.createElement('div');
-  note.className = 'applied-note';
-  note.innerHTML = `<strong>${escapeHtml(suggestion?.title || t('apply.done'))}</strong><br>${escapeHtml(suggestion?.body || '')}`;
-  docEl.prepend(note);
-  syncContractViewerModal();
+  if (modified && modified.trim() !== (currentContractText || '').trim()) {
+    // ── LLM succeeded: update global text, re-render all doc panels ──
+    currentContractText = modified;
+    currentContractHtml = '';   // original rich HTML is now stale
+
+    // Dashboard contract-doc
+    docEl.classList.remove('is-docx', 'is-rich-doc');
+    docEl.innerHTML = `<pre class="plain-doc-body">${escapeHtml(modified)}</pre>`;
+    syncContractViewerModal();
+
+    // Analyze view: invalidate DOCX canvas, switch to plain-text editor
+    const canvas   = document.getElementById('analyze-doc-canvas');
+    const rich     = document.getElementById('analyze-doc-rich');
+    const editor   = document.getElementById('analyze-doc-editor');
+    const modeBadge = document.getElementById('analyze-doc-mode-badge');
+    if (canvas)   { canvas._rendered = false; canvas.style.display = 'none'; }
+    if (rich)     { rich.style.display = 'none'; }
+    if (editor)   { editor.style.display = ''; editor.value = modified; editor._userEdited = true; }
+    if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
+  } else {
+    // ── Fallback: narrow regex replacements + prepend annotation ──
+    const combined = `${suggestion?.title || ''} ${suggestion?.body || ''}`.toLowerCase();
+    if (/(gizlilik|confidential)/i.test(combined)) {
+      replaceFirstRegexInTextNodes(docEl, /\b2\s*(yıl|years?)\b/i, currentLang === 'tr' ? '5 yıl' : '5 years');
+    }
+    if (/(ödeme|payment|fee)/i.test(combined)) {
+      replaceFirstRegexInTextNodes(docEl, /\[(payment amount not specified|belirtilmemiş)\]/i,
+        currentLang === 'tr' ? '[ÖDEME TUTARI EKLENDİ]' : '[PAYMENT AMOUNT ADDED]');
+    }
+    const note = document.createElement('div');
+    note.className = 'applied-note';
+    note.innerHTML = `<strong>${escapeHtml(suggestion?.title || t('apply.done'))}</strong><br>${escapeHtml(suggestion?.body || '')}`;
+    docEl.prepend(note);
+    syncContractViewerModal();
+  }
 }
 
 function renderAnalysis(filename, analysis, options = {}) {
@@ -1592,6 +1895,8 @@ function renderAnalysis(filename, analysis, options = {}) {
   const issueCount  = analysis.issues?.length      || 0;
   const sugCount    = analysis.suggestions?.length  || 0;
   currentContractName = filename;
+  updateAnalyzeNavBadge();
+  updateSuggestionsNavBadge();
 
   // Hide upload zone, expand viewer
   const mainArea = document.getElementById('main-area');
@@ -1602,6 +1907,13 @@ function renderAnalysis(filename, analysis, options = {}) {
   // Reset compare state for new contract
   originalDocHtml = null;
   compareModeActive = false;
+  suggestionsAppliedSet = new Set();
+  const analyzeEditorEl = document.getElementById('analyze-doc-editor');
+  if (analyzeEditorEl) analyzeEditorEl._userEdited = false;
+  const analyzeRichEl = document.getElementById('analyze-doc-rich');
+  if (analyzeRichEl) { analyzeRichEl._userEdited = false; }
+  const analyzeCanvasEl = document.getElementById('analyze-doc-canvas');
+  if (analyzeCanvasEl) { analyzeCanvasEl._rendered = false; }
 
   // -- Contract section title --
   const titleEl = document.querySelector('[data-i18n="section.contract"]');
@@ -1673,6 +1985,10 @@ function renderAnalysis(filename, analysis, options = {}) {
 
   // -- Sidebar --
   if (addToSidebar) addContractToSidebar(filename, issueCount);
+
+  // Refresh secondary views if they are active
+  if (document.getElementById('view-analyze')?.style.display !== 'none') refreshAnalyzeView();
+  if (document.getElementById('view-suggestions')?.style.display !== 'none') refreshSuggestionsView();
 }
 
 function snapshotCurrentContract(name) {
@@ -1745,17 +2061,29 @@ function updateStatCards() {
     s.archived > 0 ? 'All indexed' : 'none archived yet';
 }
 
-function applySuggestion(btn, suggestionIndex) {
+async function applySuggestion(btn, suggestionIndex) {
   if (btn.disabled) return;
-  if (currentAnalysis?.suggestions?.[suggestionIndex]) {
-    applySuggestionToDocument(currentAnalysis.suggestions[suggestionIndex]);
-  }
-  btn.textContent = t('apply.done');
+  const origText = btn.textContent;
   btn.disabled = true;
+  btn.textContent = '⏳';
+
+  const sug = currentAnalysis?.suggestions?.[suggestionIndex];
+  if (sug) {
+    const docEl = document.getElementById('contract-doc');
+    if (docEl && !originalDocHtml) originalDocHtml = docEl.innerHTML;
+    await applyDocumentEdit(sug);
+  }
+
+  btn.textContent = t('apply.done');
   btn.classList.add('applied');
+  suggestionsAppliedSet.add(suggestionIndex);
   AppState.suggestionsApplied++;
   saveState();
   updateStatCards();
+  if (document.getElementById('view-suggestions')?.style.display !== 'none') {
+    renderSuggestionsDetailList();
+    updateSuggestionsCompare(true);
+  }
 }
 
 // ===========================
@@ -1823,6 +2151,473 @@ async function handleFileUpload(event) {
 function setView(view, el) {
   document.querySelectorAll(".nav-item").forEach((n) => n.classList.remove("active"));
   el.classList.add("active");
+
+  const views = ['dashboard', 'analyze', 'archive', 'suggestions'];
+  views.forEach(v => {
+    const panel = document.getElementById(`view-${v}`);
+    if (panel) panel.style.display = v === view ? '' : 'none';
+  });
+
+  if (view === 'analyze') refreshAnalyzeView();
+  if (view === 'archive') refreshArchiveView();
+  if (view === 'suggestions') refreshSuggestionsView();
+}
+
+// ===========================
+//  Archived Contracts
+// ===========================
+
+// In-memory archive (not persisted to localStorage — ArrayBuffers not serializable)
+let archivedContracts = [];
+let activeArchivedIndex = -1;
+
+function archiveCurrentContract() {
+  if (!currentContractName) return;
+  const entry = {
+    id: `arc-${Date.now()}`,
+    name: currentContractName,
+    text: currentContractText || '',
+    html: currentContractHtml || '',
+    analysis: currentAnalysis ? JSON.parse(JSON.stringify(currentAnalysis)) : null,
+    archivedAt: new Date(),
+  };
+  archivedContracts.unshift(entry);
+  AppState.archived = archivedContracts.length;
+  saveState();
+  updateStatCards();
+  // Give feedback
+  const btn = document.getElementById('btn-archive-contract');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = '✓ ' + t('view.analyze.archived');
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+  }
+}
+
+// ===========================
+//  Analyze View
+// ===========================
+
+function refreshAnalyzeView() {
+  const empty = document.getElementById('analyze-empty');
+  const content = document.getElementById('analyze-content');
+  if (!currentContractName || !currentAnalysis) {
+    if (empty) empty.style.display = '';
+    if (content) content.style.display = 'none';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  if (content) content.style.display = 'flex';
+
+  const subtitle = document.getElementById('analyze-subtitle');
+  const issueCount = currentAnalysis.issues?.length || 0;
+  if (subtitle) subtitle.textContent = `${currentContractName} • ${formatDynamicRisksFound(issueCount)}`;
+
+  const badge = document.getElementById('analyze-issues-badge');
+  if (badge) badge.textContent = formatDynamicRisksFound(issueCount);
+
+  const list = document.getElementById('analyze-issues-list');
+  if (list) {
+    const tagClass = { Inaccuracy: 'tag-inaccuracy', Missing: 'tag-missing', Contradiction: 'tag-inaccuracy', Risk: 'tag-risk' };
+    const sevLabel = { high: t('sev.high'), medium: t('sev.medium'), low: t('sev.low') };
+    if (issueCount === 0) {
+      list.innerHTML = `<div class="panel-empty">${t('issues.none')}</div>`;
+    } else {
+      list.innerHTML = currentAnalysis.issues.map((issue, idx) => `
+        <div class="issue-detail-card" onclick="focusAnalyzeIssue(${idx})">
+          <div class="issue-detail-header">
+            <span class="issue-severity ${issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-med' : 'sev-low'}"></span>
+            <span class="issue-detail-sev-label ${issue.severity === 'high' ? 'sev-label-high' : issue.severity === 'medium' ? 'sev-label-med' : 'sev-label-low'}">${escapeHtml(sevLabel[issue.severity] || issue.severity)}</span>
+            <span class="issue-tag ${tagClass[issue.tag] || 'tag-risk'}" style="margin-left:auto">${escapeHtml(localizeTag(issue.tag || 'Risk'))}</span>
+          </div>
+          <div class="issue-detail-text">${escapeHtml(issue.text)}</div>
+          <div class="issue-detail-loc">📍 ${escapeHtml(issue.location || '')}</div>
+        </div>`).join('');
+    }
+  }
+
+  const editor = document.getElementById('analyze-doc-editor');
+  const richEditor = document.getElementById('analyze-doc-rich');
+  const canvasEl = document.getElementById('analyze-doc-canvas');
+  const modeBadge = document.getElementById('analyze-doc-mode-badge');
+
+  const isDocx = !!(currentContractDocxBuffer && window.docx?.renderAsync);
+  const isRich = !isDocx && !!(currentContractHtml && String(currentContractHtml).trim());
+
+  // Hide all three, then show the right one
+  [editor, richEditor, canvasEl].forEach(el => el && (el.style.display = 'none'));
+
+  if (isDocx) {
+    if (canvasEl) {
+      canvasEl.style.display = '';
+      if (modeBadge) { modeBadge.textContent = 'Word'; modeBadge.className = 'panel-badge badge-ok'; }
+      if (!canvasEl._rendered) {
+        canvasEl._rendered = true;
+        canvasEl.innerHTML = '<div class="docx-canvas"></div>';
+        const canvas = canvasEl.querySelector('.docx-canvas');
+        window.docx.renderAsync(currentContractDocxBuffer.slice(0), canvas, null, {
+          inWrapper: true,
+          breakPages: true,
+          className: 'docx',
+          ignoreWidth: false,
+          ignoreHeight: false,
+          useBase64URL: true,
+        }).catch(err => {
+          console.warn('Analyze docx-preview failed, switching to rich fallback:', err);
+          canvasEl._rendered = false;
+          canvasEl.style.display = 'none';
+          if (richEditor) {
+            richEditor.style.display = '';
+            richEditor.innerHTML = buildEditableRichHtml();
+          }
+        });
+      }
+    }
+  } else if (isRich) {
+    if (richEditor) {
+      richEditor.style.display = '';
+      if (!richEditor._userEdited) richEditor.innerHTML = buildEditableRichHtml();
+    }
+    if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
+  } else {
+    if (editor) {
+      editor.style.display = '';
+      if (!editor._userEdited) editor.value = currentContractText || '';
+    }
+    if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
+  }
+
+  updateAnalyzeNavBadge();
+}
+
+function downloadEditedContract() {
+  const editor    = document.getElementById('analyze-doc-editor');
+  const richEditor = document.getElementById('analyze-doc-rich');
+  const canvasEl  = document.getElementById('analyze-doc-canvas');
+  let text;
+  if (richEditor && richEditor.style.display !== 'none') {
+    text = richEditor.innerText || richEditor.textContent || currentContractText || '';
+  } else if (canvasEl && canvasEl.style.display !== 'none') {
+    text = canvasEl.innerText || canvasEl.textContent || currentContractText || '';
+  } else {
+    text = editor ? editor.value : (currentContractText || '');
+  }
+  const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_edited';
+  downloadAsDocx(text, name);
+}
+
+// ===========================
+//  Archive View
+// ===========================
+
+function refreshArchiveView() {
+  const empty = document.getElementById('archive-empty');
+  const content = document.getElementById('archive-content');
+  if (archivedContracts.length === 0) {
+    if (empty) empty.style.display = '';
+    if (content) content.style.display = 'none';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  if (content) content.style.display = '';
+
+  const list = document.getElementById('archive-list');
+  if (list) {
+    list.innerHTML = archivedContracts.map((entry, idx) => {
+      const dateStr = entry.archivedAt.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const issueCount = entry.analysis?.issues?.length || 0;
+      const status = issueCount === 0 ? 'ok' : issueCount <= 3 ? 'warn' : 'risk';
+      return `
+        <div class="archive-row ${activeArchivedIndex === idx ? 'active' : ''}" onclick="openArchivedContract(${idx})">
+          <span class="status-dot status-${status}" style="flex-shrink:0;margin-top:2px"></span>
+          <div class="archive-row-info">
+            <div class="archive-row-name">${escapeHtml(entry.name)}</div>
+            <div class="archive-row-meta">${escapeHtml(t('view.archive.archivedOn').replace('{date}', dateStr))} · ${issueCount === 0 ? t('meta.cleanDynamic') : t('meta.issuesDynamic').replace('{n}', issueCount).replace('{s}', pluralSuffix(issueCount))}</div>
+          </div>
+          <button class="btn-sm" onclick="event.stopPropagation(); downloadArchivedContractByIdx(${idx})" style="margin-left:auto;flex-shrink:0" data-i18n="view.archive.download">↓</button>
+        </div>`;
+    }).join('');
+  }
+}
+
+function openArchivedContract(idx) {
+  const entry = archivedContracts[idx];
+  if (!entry) return;
+  activeArchivedIndex = idx;
+  refreshArchiveView();
+
+  const viewer = document.getElementById('archive-viewer');
+  const titleEl = document.getElementById('archive-viewer-title');
+  const dateEl = document.getElementById('archive-viewer-date');
+  const docEl = document.getElementById('archive-doc');
+
+  if (viewer) viewer.style.display = '';
+  if (titleEl) titleEl.textContent = entry.name;
+  if (dateEl) dateEl.textContent = entry.archivedAt.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (docEl) {
+    if (entry.html) {
+      docEl.innerHTML = `<div class="word-doc-body">${entry.html}</div>`;
+    } else {
+      docEl.innerHTML = `<pre class="plain-doc-body">${escapeHtml(entry.text)}</pre>`;
+    }
+  }
+  viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closeArchiveViewer() {
+  activeArchivedIndex = -1;
+  const viewer = document.getElementById('archive-viewer');
+  if (viewer) viewer.style.display = 'none';
+  refreshArchiveView();
+}
+
+function downloadArchivedContract() {
+  if (activeArchivedIndex >= 0) downloadArchivedContractByIdx(activeArchivedIndex);
+}
+
+function downloadArchivedContractByIdx(idx) {
+  const entry = archivedContracts[idx];
+  if (!entry) return;
+  const name = (entry.name || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_archived';
+  downloadAsDocx(entry.text, name);
+}
+
+// ===========================
+//  Suggestions View
+// ===========================
+
+let suggestionsAppliedSet = new Set(); // indexes of applied suggestions in current contract
+
+function refreshSuggestionsView() {
+  const empty = document.getElementById('suggestions-empty');
+  const content = document.getElementById('suggestions-content');
+  if (!currentContractName || !currentAnalysis?.suggestions?.length) {
+    if (empty) empty.style.display = '';
+    if (content) content.style.display = 'none';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  if (content) content.style.display = '';
+
+  const subtitle = document.getElementById('suggestions-subtitle');
+  const suggestionCount = currentAnalysis?.suggestions?.length || 0;
+  if (subtitle) subtitle.textContent = `${currentContractName} • ${formatDynamicSuggestionCount(suggestionCount)}`;
+
+  renderSuggestionsDetailList();
+  updateSuggestionsCompare(true);
+  updateSuggestionsNavBadge();
+}
+
+function renderSuggestionsDetailList() {
+  const list = document.getElementById('suggestions-detail-list');
+  if (!list || !currentAnalysis?.suggestions) return;
+  const sugs = currentAnalysis.suggestions;
+  list.innerHTML = sugs.map((sug, idx) => {
+    const applied = suggestionsAppliedSet.has(idx);
+    return `
+      <div class="sug-detail-card ${applied ? 'sug-applied' : ''}" onclick="focusSuggestionInView(${idx})">
+        <div class="sug-detail-header">
+          <span class="sug-detail-icon">→</span>
+          <span class="sug-detail-title">${escapeHtml(sug.title)}</span>
+          <button class="apply-btn ${applied ? 'applied' : ''}" ${applied ? 'disabled' : ''} onclick="event.stopPropagation(); applySuggestionFromView(${idx})" style="margin-left:auto">
+            ${applied ? t('apply.done') : t('apply.btn')}
+          </button>
+        </div>
+        <div class="sug-detail-body">${escapeHtml(sug.body)}</div>
+      </div>`;
+  }).join('');
+}
+
+async function applySuggestionFromView(idx) {
+  if (suggestionsAppliedSet.has(idx)) return;
+
+  const sug = currentAnalysis?.suggestions?.[idx];
+  if (!sug) return;
+
+  // Snapshot original BEFORE changes so compare works
+  const docEl = document.getElementById('contract-doc');
+  if (docEl && !originalDocHtml) originalDocHtml = docEl.innerHTML;
+
+  // Show loading state on the card's button
+  const cards = document.querySelectorAll('#suggestions-detail-list .sug-detail-card');
+  const btn = cards[idx]?.querySelector('.apply-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+  suggestionsAppliedSet.add(idx);
+
+  await applyDocumentEdit(sug);
+
+  AppState.suggestionsApplied++;
+  saveState();
+  updateStatCards();
+  renderSuggestionsDetailList();
+  updateSuggestionsCompare(true);
+
+  // Also update dashboard panel Apply buttons
+  const dashBtn = document.querySelector(`#suggestions-panel-body .suggestion-item:nth-child(${idx + 1}) .apply-btn`);
+  if (dashBtn) { dashBtn.textContent = t('apply.done'); dashBtn.disabled = true; dashBtn.classList.add('applied'); }
+
+  // Scroll to compare and flash the change
+  const compareEl = document.getElementById('suggestions-compare');
+  if (compareEl && compareEl.style.display !== 'none') {
+    setTimeout(() => {
+      compareEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(() => {
+        const afterPanel = document.getElementById('sug-compare-after');
+        if (!afterPanel) return;
+        const note = afterPanel.querySelector('.applied-note');
+        if (note) {
+          note.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          note.classList.add('flash-highlight');
+          setTimeout(() => note.classList.remove('flash-highlight'), 1800);
+        }
+      }, 400);
+    }, 60);
+  }
+}
+
+async function applyAllSuggestions() {
+  const applyAllBtn = document.getElementById('btn-apply-all');
+  if (applyAllBtn) { applyAllBtn.disabled = true; applyAllBtn.textContent = '⏳'; }
+  const sugs = currentAnalysis?.suggestions || [];
+  for (let idx = 0; idx < sugs.length; idx++) {
+    if (!suggestionsAppliedSet.has(idx)) await applySuggestionFromView(idx);
+  }
+  if (applyAllBtn) { applyAllBtn.textContent = '✓ ' + t('apply.done'); }
+}
+
+function updateSuggestionsCompare(forceVisible = false) {
+  const compareEl = document.getElementById('suggestions-compare');
+  if (!compareEl) return;
+
+  const before = document.getElementById('sug-compare-before');
+  const after = document.getElementById('sug-compare-after');
+  const current = document.getElementById('contract-doc');
+
+  if (!forceVisible && (suggestionsAppliedSet.size === 0 || !originalDocHtml)) {
+    compareEl.style.display = 'none';
+    return;
+  }
+
+  compareEl.style.display = '';
+
+  if (before) {
+    if (originalDocHtml) before.innerHTML = originalDocHtml;
+    else if (current) before.innerHTML = current.innerHTML;
+  }
+  if (after && current) after.innerHTML = current.innerHTML;
+}
+
+function downloadSuggestedContract() {
+  const docEl = document.getElementById('contract-doc');
+  const text = docEl ? (docEl.innerText || docEl.textContent || currentContractText || '') : (currentContractText || '');
+  const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_modified';
+  downloadAsDocx(text, name);
+}
+
+// ===========================
+//  Download helper — DOCX generation via JSZip
+// ===========================
+
+function downloadTextFile(text, filename) {
+  // Kept as plain-text fallback
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  triggerBlobDownload(blob, filename);
+}
+
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function downloadAsDocx(text, baseName) {
+  if (typeof JSZip === 'undefined') {
+    downloadTextFile(text, baseName + '.txt');
+    return;
+  }
+  const zip = new JSZip();
+
+  zip.file('[Content_Types].xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n' +
+    '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n' +
+    '  <Default Extension="xml" ContentType="application/xml"/>\n' +
+    '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\n' +
+    '  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>\n' +
+    '</Types>');
+
+  zip.file('_rels/.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n' +
+    '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\n' +
+    '</Relationships>');
+
+  zip.file('word/_rels/document.xml.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n' +
+    '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>\n' +
+    '</Relationships>');
+
+  zip.file('word/styles.xml', buildDocxStyles());
+  zip.file('word/document.xml', buildDocxDocument(text));
+
+  const blob = await zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+  triggerBlobDownload(blob, baseName + '.docx');
+}
+
+function buildDocxDocument(text) {
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const paras = String(text || '').split(/\r?\n/).map(line => {
+    const s = line.trim();
+    if (!s) return '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>';
+    const esc = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    // Heading heuristic: ALL-CAPS line or "1. TITLE" pattern
+    const isHeading = (s === s.toUpperCase() && s.length < 120 && /[A-ZÇĞİÖŞÜA-Z]/.test(s)) ||
+                      /^\d+\.\s+[A-ZÇĞİÖŞÜA-Z]/.test(s);
+    if (isHeading) {
+      return '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>' +
+             `<w:r><w:t xml:space="preserve">${esc}</w:t></w:r></w:p>`;
+    }
+    return '<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>' +
+           `<w:r><w:t xml:space="preserve">${esc}</w:t></w:r></w:p>`;
+  }).join('\n');
+
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">\n' +
+    '<w:body>\n' + paras + '\n' +
+    '<w:sectPr>' +
+    '<w:pgSz w:w="12240" w:h="15840"/>' +
+    '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1800"/>' +
+    '</w:sectPr>\n</w:body>\n</w:document>';
+}
+
+function buildDocxStyles() {
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+  '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">\n' +
+  '<w:docDefaults><w:rPrDefault><w:rPr>' +
+  '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>' +
+  '<w:sz w:val="22"/><w:szCs w:val="22"/>' +
+  '</w:rPr></w:rPrDefault>' +
+  '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault>' +
+  '</w:docDefaults>\n' +
+  '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>\n' +
+  '<w:style w:type="paragraph" w:styleId="Heading1">' +
+  '<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>' +
+  '<w:pPr><w:spacing w:before="240" w:after="80"/></w:pPr>' +
+  '<w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>' +
+  '</w:style>\n' +
+  '</w:styles>';
 }
 
 function selectContract(idx, el) {
@@ -1837,6 +2632,8 @@ function selectContract(idx, el) {
   currentAnalysis = demo.analysis;
   currentContractName = c.name;
   chatHistory = [];
+  updateAnalyzeNavBadge();
+  updateSuggestionsNavBadge();
 
   renderAnalysis(c.name, demo.analysis, { trackState: false, addToSidebar: false });
 
@@ -1910,6 +2707,13 @@ function setLoading(on) {
 // ===========================
 document.addEventListener('DOMContentLoaded', () => {
   applyTheme(getInitialTheme(), false);
+  // Restore saved model preference
+  const savedModel = localStorage.getItem('clauseai-model');
+  if (savedModel) {
+    OLLAMA_MODEL = savedModel;
+    const sel = document.getElementById('model-select');
+    if (sel) sel.value = savedModel;
+  }
   if (window.matchMedia) {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     media.addEventListener('change', () => {
@@ -1921,4 +2725,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   setLang('tr');
   updateStatCards();
+
+  // Track manual edits in the analyze editor so we don't overwrite them on re-render
+  const analyzeEditor = document.getElementById('analyze-doc-editor');
+  if (analyzeEditor) {
+    analyzeEditor.addEventListener('input', () => { analyzeEditor._userEdited = true; });
+  }
+
+  const richAnalyzeEditor = document.getElementById('analyze-doc-rich');
+  if (richAnalyzeEditor) {
+    richAnalyzeEditor.addEventListener('input', () => { richAnalyzeEditor._userEdited = true; });
+  }
+
+  updateAnalyzeNavBadge();
+  updateSuggestionsNavBadge();
 });

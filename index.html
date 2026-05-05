@@ -40,6 +40,14 @@
             </svg>
           </button>
         </div>
+        <div class="model-selector">
+          <label class="model-selector-label" data-i18n="model.label">Model</label>
+          <select id="model-select" onchange="setOllamaModel(this.value)">
+            <option value="qwen2.5:3b" selected>qwen2.5:3b ⚡</option>
+            <option value="llama3.2:3b">llama3.2:3b ⚡</option>
+            <option value="llama3">llama3 (slow)</option>
+          </select>
+        </div>
         <button class="btn-sm" onclick="showArchive()" data-i18n="btn.archive">Archive</button>
         <button class="btn-sm btn-primary" onclick="triggerUpload()" data-i18n="btn.newContract">+ New Contract</button>
       </div>
@@ -55,13 +63,14 @@
         </div>
         <div class="nav-item" onclick="setView('analyze', this)">
           <span class="nav-icon">⦿</span> <span data-i18n="nav.analyze">Analyze</span>
-          <span class="nav-badge">3</span>
-        </div>
-        <div class="nav-item" onclick="setView('archive', this)">
-          <span class="nav-icon">⊟</span> <span data-i18n="nav.archive">Archive</span>
+          <span class="nav-badge" id="nav-analyze-badge">3</span>
         </div>
         <div class="nav-item" onclick="setView('suggestions', this)">
           <span class="nav-icon">✦</span> <span data-i18n="nav.suggestions">Suggestions</span>
+          <span class="nav-badge" id="nav-suggestions-badge">3</span>
+        </div>
+        <div class="nav-item" onclick="setView('archive', this)">
+          <span class="nav-icon">⊟</span> <span data-i18n="nav.archive">Archive</span>
         </div>
       </div>
 
@@ -90,6 +99,9 @@
 
     <!-- Main -->
     <main class="main" id="main-area">
+
+    <!-- ===== DASHBOARD VIEW ===== -->
+    <div id="view-dashboard" class="view-panel">
 
       <!-- Stats -->
       <div class="section-title" data-i18n="section.overview">Overview</div>
@@ -239,6 +251,124 @@
         </div>
 
       </div>
+
+    </div> <!-- end #view-dashboard -->
+
+    <!-- ===== ANALYZE VIEW ===== -->
+    <div id="view-analyze" class="view-panel" style="display:none">
+      <div class="view-header">
+        <div>
+          <div class="view-title" data-i18n="view.analyze.title">Contract Analysis</div>
+          <div class="view-subtitle" id="analyze-subtitle" data-i18n="view.analyze.subtitle">Load a contract to see detailed issues</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn-sm" onclick="archiveCurrentContract()" id="btn-archive-contract" data-i18n="view.analyze.archive">Archive Contract</button>
+          <button class="btn-sm btn-primary" onclick="downloadEditedContract()" data-i18n="view.analyze.download">↓ Download</button>
+        </div>
+      </div>
+      <div id="analyze-empty" class="view-empty">
+        <div class="view-empty-icon">⦿</div>
+        <div class="view-empty-title" data-i18n="view.analyze.empty">No contract loaded</div>
+        <div class="view-empty-sub" data-i18n="view.analyze.emptySub">Upload a contract or select one from the sidebar to view detailed analysis.</div>
+        <button class="analyze-btn" onclick="triggerUpload()" style="margin-top:16px" data-i18n="upload.btn">↑ Upload Contract</button>
+      </div>
+      <div id="analyze-content" style="display:none">
+        <div class="analyze-layout">
+          <div class="analyze-issues-col">
+            <div class="panel">
+              <div class="panel-header">
+                <span class="panel-icon">⚠</span>
+                <span class="panel-title" data-i18n="panel.risks">Inaccuracies &amp; Risks</span>
+                <span class="panel-badge badge-warn" id="analyze-issues-badge">—</span>
+              </div>
+              <div id="analyze-issues-list"></div>
+            </div>
+          </div>
+          <div class="analyze-doc-col">
+            <div class="panel">
+              <div class="panel-header">
+                <span class="panel-icon" id="analyze-doc-panel-icon">📄</span>
+                <span class="panel-title" data-i18n="view.analyze.editDoc">Belge</span>
+                <span class="panel-badge badge-info" id="analyze-doc-mode-badge" data-i18n="view.analyze.editable">Görüntüleyici</span>
+              </div>
+              <!-- Word viewer (docx-preview) -->
+              <div id="analyze-doc-canvas" class="analyze-doc-canvas contract-doc is-docx" style="display:none"></div>
+              <!-- Rich HTML editable fallback -->
+              <div id="analyze-doc-rich" class="doc-editor doc-editor-rich" contenteditable="true" spellcheck="false" style="display:none"></div>
+              <!-- Plain text fallback -->
+              <textarea id="analyze-doc-editor" class="doc-editor" spellcheck="false" style="display:none"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== ARCHIVE VIEW ===== -->
+    <div id="view-archive" class="view-panel" style="display:none">
+      <div class="view-header">
+        <div>
+          <div class="view-title" data-i18n="view.archive.title">Archive</div>
+          <div class="view-subtitle" data-i18n="view.archive.subtitle">Archived contracts with full document viewer</div>
+        </div>
+      </div>
+      <div id="archive-empty" class="view-empty">
+        <div class="view-empty-icon">⊟</div>
+        <div class="view-empty-title" data-i18n="view.archive.empty">No archived contracts yet</div>
+        <div class="view-empty-sub" data-i18n="view.archive.emptySub">Archive contracts from the Analyze view to find them here.</div>
+      </div>
+      <div id="archive-content" style="display:none">
+        <div id="archive-list" class="archive-list"></div>
+        <div id="archive-viewer" class="archive-viewer" style="display:none">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">📄</span>
+              <span class="panel-title" id="archive-viewer-title">—</span>
+              <span class="panel-badge badge-ok" id="archive-viewer-date">—</span>
+              <button class="btn-sm" onclick="downloadArchivedContract()" style="margin-left:auto" data-i18n="view.archive.download">↓ Download</button>
+              <button class="btn-sm" onclick="closeArchiveViewer()" style="margin-left:8px">✕</button>
+            </div>
+            <div class="contract-doc" id="archive-doc" style="max-height:60vh"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== SUGGESTIONS VIEW ===== -->
+    <div id="view-suggestions" class="view-panel" style="display:none">
+      <div class="view-header">
+        <div>
+          <div class="view-title" data-i18n="view.suggestions.title">Recommendations</div>
+          <div class="view-subtitle" id="suggestions-subtitle" data-i18n="view.suggestions.subtitle">Detailed AI recommendations for the current contract</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn-sm" id="btn-apply-all" onclick="applyAllSuggestions()" data-i18n="view.suggestions.applyAll">Apply All</button>
+          <button class="btn-sm btn-primary" onclick="downloadSuggestedContract()" data-i18n="view.suggestions.download">↓ Download Modified</button>
+        </div>
+      </div>
+      <div id="suggestions-empty" class="view-empty">
+        <div class="view-empty-icon">✦</div>
+        <div class="view-empty-title" data-i18n="view.suggestions.empty">No recommendations yet</div>
+        <div class="view-empty-sub" data-i18n="view.suggestions.emptySub">Upload a contract to get AI-powered recommendations.</div>
+        <button class="analyze-btn" onclick="triggerUpload()" style="margin-top:16px" data-i18n="upload.btn">↑ Upload Contract</button>
+      </div>
+      <div id="suggestions-content" style="display:none">
+        <div id="suggestions-detail-list" class="suggestions-detail-list"></div>
+        <div id="suggestions-compare" class="suggestions-compare" style="display:none">
+          <div class="view-section-title" data-i18n="view.suggestions.compareTitle">Before / After</div>
+          <div class="compare-cols">
+            <div class="compare-col">
+              <div class="compare-label" data-i18n="view.suggestions.before">Original</div>
+              <div class="contract-doc" id="sug-compare-before" style="max-height:50vh"></div>
+            </div>
+            <div class="compare-col">
+              <div class="compare-label" data-i18n="view.suggestions.after">Modified</div>
+              <div class="contract-doc" id="sug-compare-after" style="max-height:50vh"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     </main>
   </div>
 
