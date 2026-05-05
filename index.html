@@ -351,19 +351,32 @@
         <div class="view-empty-sub" data-i18n="view.suggestions.emptySub">Upload a contract to get AI-powered recommendations.</div>
         <button class="analyze-btn" onclick="triggerUpload()" style="margin-top:16px" data-i18n="upload.btn">↑ Upload Contract</button>
       </div>
-      <div id="suggestions-content" style="display:none">
-        <div id="suggestions-detail-list" class="suggestions-detail-list"></div>
-        <div id="suggestions-compare" class="suggestions-compare" style="display:none">
-          <div class="view-section-title" data-i18n="view.suggestions.compareTitle">Before / After</div>
-          <div class="compare-cols">
-            <div class="compare-col">
-              <div class="compare-label" data-i18n="view.suggestions.before">Original</div>
-              <div class="contract-doc" id="sug-compare-before" style="max-height:50vh"></div>
+      <div id="suggestions-content" class="suggestions-split-layout" style="display:none">
+        <!-- Left col: suggestion cards -->
+        <div id="sug-left-col" class="sug-split-col sug-split-left">
+          <div id="suggestions-detail-list" class="suggestions-detail-list"></div>
+        </div>
+
+        <!-- Drag handle -->
+        <div id="sug-divider" class="sug-split-divider" title="Sürükleyerek genişliği ayarlayın"></div>
+
+        <!-- Right col: before/after compare -->
+        <div id="sug-right-col" class="sug-split-col sug-split-right">
+          <div id="suggestions-compare" class="suggestions-compare" style="display:none">
+            <div class="view-section-title" data-i18n="view.suggestions.compareTitle">Before / After</div>
+            <div class="compare-cols">
+              <div class="compare-col">
+                <div class="compare-label" data-i18n="view.suggestions.before">Original</div>
+                <div class="contract-doc" id="sug-compare-before"></div>
+              </div>
+              <div class="compare-col">
+                <div class="compare-label" data-i18n="view.suggestions.after">Modified</div>
+                <div class="contract-doc" id="sug-compare-after"></div>
+              </div>
             </div>
-            <div class="compare-col">
-              <div class="compare-label" data-i18n="view.suggestions.after">Modified</div>
-              <div class="contract-doc" id="sug-compare-after" style="max-height:50vh"></div>
-            </div>
+          </div>
+          <div id="sug-right-empty" class="sug-right-empty">
+            <span>Bir öneriyi uygulayın</span>
           </div>
         </div>
       </div>

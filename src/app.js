@@ -204,7 +204,8 @@ let currentContractName = "";
 let contractViewerExpanded = false;
 let savedContractSeq = 1;
 const savedContracts = new Map();
-let originalDocHtml = null;   // snapshot before first suggestion applied
+let originalDocHtml = null;      // snapshot before first suggestion applied
+let originalContractText = null; // plain-text snapshot for diff
 let compareModeActive = false;
 
 function buildChatSystemPrompt() {
@@ -595,7 +596,91 @@ function refreshCompareColumns() {
   const afterEl  = document.getElementById('compare-doc-after');
   const currentSrc = document.getElementById('contract-doc');
   if (beforeEl && originalDocHtml !== null) beforeEl.innerHTML = originalDocHtml;
-  if (afterEl  && currentSrc)              afterEl.innerHTML  = currentSrc.innerHTML;
+  if (afterEl) {
+    if (originalContractText && currentContractText) {
+      afterEl.innerHTML = buildTrackChangesHtml(originalContractText, currentContractText);
+    } else if (currentSrc) {
+      afterEl.innerHTML = currentSrc.innerHTML;
+    }
+  }
+}
+
+// ── Track-changes diff engine ────────────────────────────────────────────────
+
+function lcsDiff(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0 && n === 0) return [];
+  const dp = new Array(m + 1);
+  for (let i = 0; i <= m; i++) { dp[i] = new Int32Array(n + 1); }
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1]
+        ? dp[i-1][j-1] + 1
+        : Math.max(dp[i-1][j], dp[i][j-1]);
+  const ops = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i-1] === b[j-1]) {
+      ops.push({ type: 'equal', value: a[i-1] }); i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+      ops.push({ type: 'insert', value: b[j-1] }); j--;
+    } else {
+      ops.push({ type: 'delete', value: a[i-1] }); i--;
+    }
+  }
+  return ops.reverse();
+}
+
+function tokenizeText(text) {
+  return (text.match(/[^\s]+|\s+/g) || []);
+}
+
+function buildTrackChangesHtml(oldText, newText) {
+  if (!oldText || !newText) {
+    return `<div class="word-doc-body track-changes-doc">${escapeHtml(newText || '')}</div>`;
+  }
+
+  const oldLines = oldText.split('\n');
+  const newLines = newText.split('\n');
+  const lineOps = lcsDiff(oldLines, newLines);
+
+  let html = '<div class="word-doc-body track-changes-doc">';
+  let i = 0;
+  while (i < lineOps.length) {
+    const op = lineOps[i];
+    if (op.type === 'equal') {
+      html += escapeHtml(op.value) + '\n';
+      i++;
+    } else {
+      // Collect a run of del/ins lines
+      const delLines = [];
+      const insLines = [];
+      while (i < lineOps.length && lineOps[i].type === 'delete') { delLines.push(lineOps[i].value); i++; }
+      while (i < lineOps.length && lineOps[i].type === 'insert') { insLines.push(lineOps[i].value); i++; }
+
+      if (delLines.length > 0 && insLines.length > 0) {
+        // Replaced block — do word-level diff
+        const oldWords = tokenizeText(delLines.join('\n'));
+        const newWords = tokenizeText(insLines.join('\n'));
+        const wordOps = (oldWords.length * newWords.length > 150000)
+          ? [{ type: 'delete', value: delLines.join('\n') }, { type: 'insert', value: insLines.join('\n') }]
+          : lcsDiff(oldWords, newWords);
+        for (const wop of wordOps) {
+          const v = escapeHtml(wop.value);
+          if (wop.type === 'equal')  html += v;
+          else if (wop.type === 'delete') html += `<del class="tc-del">${v}</del>`;
+          else                            html += `<ins class="tc-ins">${v}</ins>`;
+        }
+        html += '\n';
+      } else if (delLines.length > 0) {
+        html += `<del class="tc-del">${escapeHtml(delLines.join('\n'))}</del>\n`;
+      } else {
+        html += `<ins class="tc-ins">${escapeHtml(insLines.join('\n'))}</ins>\n`;
+      }
+    }
+  }
+  html += '</div>';
+  return html;
 }
 
 function getSystemTheme() {
@@ -1639,13 +1724,27 @@ function focusAnalyzeIssue(idx) {
   const docTarget = isCanvasVisible ? canvasEl : isRichVisible ? richEditor : null;
   if (docTarget) {
     docTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    const queries = [
-      String(issue.location || '').replace(/^(clause|madde|section|bölüm)\s*/i, '').trim(),
-      String(issue.text || '').split(/[.,;:]/)[0].trim().slice(0, 80),
-    ].filter(q => q.length > 2);
+    const baseQueries = issueQueries(issue);
+    const wordQueries = String(issue.text || '')
+      .replace(/[.,;:()\[\]{}"']/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 5)
+      .slice(0, 8);
+    const queries = [...new Set([...baseQueries, ...wordQueries])].filter(q => q.length > 2);
+
     for (const q of queries) {
       if (highlightAndScrollTextIn(docTarget, q)) return;
     }
+
+    // DOCX render can complete slightly after click; retry once.
+    if (isCanvasVisible) {
+      setTimeout(() => {
+        for (const q of queries) {
+          if (highlightAndScrollTextIn(docTarget, q)) return;
+        }
+      }, 240);
+    }
+
     if (!isCanvasVisible) docTarget.focus();
     return;
   }
@@ -1850,27 +1949,35 @@ async function applyDocumentEdit(suggestion) {
   if (!originalDocHtml) {
     originalDocHtml = docEl.innerHTML;
   }
+  if (!originalContractText) {
+    originalContractText = currentContractText || '';
+  }
 
   const modified = await applyWithLLM(suggestion);
 
   if (modified && modified.trim() !== (currentContractText || '').trim()) {
     // ── LLM succeeded: update global text, re-render all doc panels ──
     currentContractText = modified;
-    currentContractHtml = '';   // original rich HTML is now stale
+    currentContractHtml = formatAiMessage(modified);
+    currentContractDocxBuffer = null; // avoid showing stale original DOCX after edits
 
     // Dashboard contract-doc
-    docEl.classList.remove('is-docx', 'is-rich-doc');
-    docEl.innerHTML = `<pre class="plain-doc-body">${escapeHtml(modified)}</pre>`;
+    docEl.classList.remove('is-docx');
+    docEl.classList.add('is-rich-doc');
+    docEl.innerHTML = `
+      <div class="doc-title">${escapeHtml((currentContractName || '').toUpperCase())}</div>
+      <div class="word-doc-body">${currentContractHtml}</div>
+    `;
     syncContractViewerModal();
 
-    // Analyze view: invalidate DOCX canvas, switch to plain-text editor
+    // Analyze view: invalidate DOCX canvas, keep editable rich view
     const canvas   = document.getElementById('analyze-doc-canvas');
     const rich     = document.getElementById('analyze-doc-rich');
     const editor   = document.getElementById('analyze-doc-editor');
     const modeBadge = document.getElementById('analyze-doc-mode-badge');
     if (canvas)   { canvas._rendered = false; canvas.style.display = 'none'; }
-    if (rich)     { rich.style.display = 'none'; }
-    if (editor)   { editor.style.display = ''; editor.value = modified; editor._userEdited = true; }
+    if (rich)     { rich.style.display = ''; rich.innerHTML = buildEditableRichHtml(); rich._userEdited = false; }
+    if (editor)   { editor.style.display = 'none'; editor.value = modified; editor._userEdited = false; }
     if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
   } else {
     // ── Fallback: narrow regex replacements + prepend annotation ──
@@ -1906,6 +2013,7 @@ function renderAnalysis(filename, analysis, options = {}) {
 
   // Reset compare state for new contract
   originalDocHtml = null;
+  originalContractText = null;
   compareModeActive = false;
   suggestionsAppliedSet = new Set();
   const analyzeEditorEl = document.getElementById('analyze-doc-editor');
@@ -2071,6 +2179,7 @@ async function applySuggestion(btn, suggestionIndex) {
   if (sug) {
     const docEl = document.getElementById('contract-doc');
     if (docEl && !originalDocHtml) originalDocHtml = docEl.innerHTML;
+    if (!originalContractText) originalContractText = currentContractText || '';
     await applyDocumentEdit(sug);
   }
 
@@ -2251,6 +2360,8 @@ function refreshAnalyzeView() {
   if (isDocx) {
     if (canvasEl) {
       canvasEl.style.display = '';
+      canvasEl.contentEditable = 'true';
+      canvasEl.spellcheck = false;
       if (modeBadge) { modeBadge.textContent = 'Word'; modeBadge.className = 'panel-badge badge-ok'; }
       if (!canvasEl._rendered) {
         canvasEl._rendered = true;
@@ -2295,16 +2406,23 @@ function downloadEditedContract() {
   const editor    = document.getElementById('analyze-doc-editor');
   const richEditor = document.getElementById('analyze-doc-rich');
   const canvasEl  = document.getElementById('analyze-doc-canvas');
-  let text;
+
+  // Prefer rich HTML source for formatting-preserving DOCX export
+  let html = '';
+  let text = '';
   if (richEditor && richEditor.style.display !== 'none') {
-    text = richEditor.innerText || richEditor.textContent || currentContractText || '';
+    html = richEditor.innerHTML || '';
+    text = richEditor.innerText || currentContractText || '';
   } else if (canvasEl && canvasEl.style.display !== 'none') {
-    text = canvasEl.innerText || canvasEl.textContent || currentContractText || '';
+    // For DOCX canvas: use currentContractHtml if available (the rich mammoth HTML)
+    html = currentContractHtml || canvasEl.innerHTML || '';
+    text = currentContractText || canvasEl.innerText || '';
   } else {
     text = editor ? editor.value : (currentContractText || '');
+    html = currentContractHtml || '';
   }
   const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_edited';
-  downloadAsDocx(text, name);
+  downloadAsDocx(text, name, html);
 }
 
 // ===========================
@@ -2438,6 +2556,7 @@ async function applySuggestionFromView(idx) {
   // Snapshot original BEFORE changes so compare works
   const docEl = document.getElementById('contract-doc');
   if (docEl && !originalDocHtml) originalDocHtml = docEl.innerHTML;
+  if (!originalContractText) originalContractText = currentContractText || '';
 
   // Show loading state on the card's button
   const cards = document.querySelectorAll('#suggestions-detail-list .sug-detail-card');
@@ -2488,7 +2607,8 @@ async function applyAllSuggestions() {
 }
 
 function updateSuggestionsCompare(forceVisible = false) {
-  const compareEl = document.getElementById('suggestions-compare');
+  const compareEl  = document.getElementById('suggestions-compare');
+  const rightEmpty = document.getElementById('sug-right-empty');
   if (!compareEl) return;
 
   const before = document.getElementById('sug-compare-before');
@@ -2497,23 +2617,31 @@ function updateSuggestionsCompare(forceVisible = false) {
 
   if (!forceVisible && (suggestionsAppliedSet.size === 0 || !originalDocHtml)) {
     compareEl.style.display = 'none';
+    if (rightEmpty) rightEmpty.style.display = '';
     return;
   }
 
   compareEl.style.display = '';
+  if (rightEmpty) rightEmpty.style.display = 'none';
 
   if (before) {
     if (originalDocHtml) before.innerHTML = originalDocHtml;
     else if (current) before.innerHTML = current.innerHTML;
   }
-  if (after && current) after.innerHTML = current.innerHTML;
+  if (after) {
+    if (originalContractText && currentContractText && suggestionsAppliedSet.size > 0) {
+      after.innerHTML = buildTrackChangesHtml(originalContractText, currentContractText);
+    } else if (current) {
+      after.innerHTML = current.innerHTML;
+    }
+  }
 }
 
 function downloadSuggestedContract() {
-  const docEl = document.getElementById('contract-doc');
-  const text = docEl ? (docEl.innerText || docEl.textContent || currentContractText || '') : (currentContractText || '');
+  const text = currentContractText || '';
+  const html = currentContractHtml || '';
   const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_modified';
-  downloadAsDocx(text, name);
+  downloadAsDocx(text, name, html);
 }
 
 // ===========================
@@ -2537,7 +2665,98 @@ function triggerBlobDownload(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadAsDocx(text, baseName) {
+// ── HTML → DOCX paragraph XML converter ───────────────────────────────────
+function htmlToDocxParas(htmlString) {
+  const div = document.createElement('div');
+  div.innerHTML = String(htmlString || '');
+  const paras = [];
+
+  function esc(s) {
+    return String(s || '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function inlineRuns(node, opts) {
+    opts = opts || {};
+    let out = '';
+    for (let i = 0; i < node.childNodes.length; i++) {
+      const child = node.childNodes[i];
+      if (child.nodeType === 3) { // TEXT_NODE
+        const txt = child.textContent;
+        if (!txt) continue;
+        let rPr = '';
+        if (opts.bold)      rPr += '<w:b/><w:bCs/>';
+        if (opts.italic)    rPr += '<w:i/><w:iCs/>';
+        if (opts.underline) rPr += '<w:u w:val="single"/>';
+        out += `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${esc(txt)}</w:t></w:r>`;
+      } else if (child.nodeType === 1) { // ELEMENT_NODE
+        const t = child.tagName.toLowerCase();
+        const next = Object.assign({}, opts);
+        if (t === 'strong' || t === 'b') next.bold = true;
+        if (t === 'em' || t === 'i') next.italic = true;
+        if (t === 'u') next.underline = true;
+        if (t === 'br') { out += '<w:r><w:br/></w:r>'; continue; }
+        out += inlineRuns(child, next);
+      }
+    }
+    return out;
+  }
+
+  function processEl(el) {
+    if (el.nodeType === 3) { // TEXT_NODE
+      const txt = el.textContent.trim();
+      if (txt) paras.push(`<w:p><w:pPr><w:spacing w:after="120"/></w:pPr><w:r><w:t xml:space="preserve">${esc(txt)}</w:t></w:r></w:p>`);
+      return;
+    }
+    if (el.nodeType !== 1) return;
+    const tag = el.tagName.toLowerCase();
+
+    if (/^h[1-6]$/.test(tag)) {
+      const level = parseInt(tag[1], 10);
+      const szMap = [36, 32, 28, 26, 24, 22];
+      const sz = szMap[level - 1] || 26;
+      const runs = inlineRuns(el, { bold: true });
+      const styleId = level <= 2 ? 'Heading1' : level <= 4 ? 'Heading2' : 'Heading3';
+      paras.push(`<w:p><w:pPr><w:pStyle w:val="${styleId}"/><w:spacing w:before="240" w:after="80"/></w:pPr>${runs}</w:p>`);
+    } else if (tag === 'p') {
+      const runs = inlineRuns(el);
+      paras.push(runs
+        ? `<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>${runs}</w:p>`
+        : '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
+    } else if (tag === 'li') {
+      const isOl = el.parentElement && el.parentElement.tagName.toLowerCase() === 'ol';
+      const runs = inlineRuns(el);
+      if (runs) {
+        const bullet = isOl ? '' : '<w:r><w:t xml:space="preserve">• </w:t></w:r>';
+        paras.push(`<w:p><w:pPr><w:ind w:left="720" w:hanging="360"/><w:spacing w:after="80"/></w:pPr>${bullet}${runs}</w:p>`);
+      }
+    } else if (tag === 'ul' || tag === 'ol' || tag === 'div' || tag === 'section' || tag === 'article') {
+      for (let i = 0; i < el.childNodes.length; i++) processEl(el.childNodes[i]);
+    } else if (tag === 'br') {
+      paras.push('<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
+    } else if (tag === 'table') {
+      // Flatten table rows as plain paragraphs
+      el.querySelectorAll('tr').forEach(tr => {
+        const cells = Array.from(tr.querySelectorAll('td, th')).map(td => td.textContent.trim()).filter(Boolean);
+        if (cells.length) {
+          const line = esc(cells.join('  │  '));
+          paras.push(`<w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:t xml:space="preserve">${line}</w:t></w:r></w:p>`);
+        }
+      });
+    } else {
+      // span, strong, em, etc at block level — wrap as paragraph if has text
+      const runs = inlineRuns(el);
+      if (runs) paras.push(`<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>${runs}</w:p>`);
+      else { for (let i = 0; i < el.childNodes.length; i++) processEl(el.childNodes[i]); }
+    }
+  }
+
+  for (let i = 0; i < div.childNodes.length; i++) processEl(div.childNodes[i]);
+  return paras.join('\n');
+}
+// ────────────────────────────────────────────────────────────────────────────
+
+async function downloadAsDocx(text, baseName, html) {
   if (typeof JSZip === 'undefined') {
     downloadTextFile(text, baseName + '.txt');
     return;
@@ -2566,13 +2785,28 @@ async function downloadAsDocx(text, baseName) {
     '</Relationships>');
 
   zip.file('word/styles.xml', buildDocxStyles());
-  zip.file('word/document.xml', buildDocxDocument(text));
+  const docXml = (html && html.trim())
+    ? buildDocxDocumentFromHtml(html)
+    : buildDocxDocument(text);
+  zip.file('word/document.xml', docXml);
 
   const blob = await zip.generateAsync({
     type: 'blob',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   });
   triggerBlobDownload(blob, baseName + '.docx');
+}
+
+function buildDocxDocumentFromHtml(html) {
+  const paras = htmlToDocxParas(html);
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">\n' +
+    '<w:body>\n' + paras + '\n' +
+    '<w:sectPr>' +
+    '<w:pgSz w:w="12240" w:h="15840"/>' +
+    '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1800"/>' +
+    '</w:sectPr>\n</w:body>\n</w:document>';
 }
 
 function buildDocxDocument(text) {
@@ -2614,8 +2848,18 @@ function buildDocxStyles() {
   '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>\n' +
   '<w:style w:type="paragraph" w:styleId="Heading1">' +
   '<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>' +
+  '<w:pPr><w:spacing w:before="280" w:after="80"/></w:pPr>' +
+  '<w:rPr><w:b/><w:bCs/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr>' +
+  '</w:style>\n' +
+  '<w:style w:type="paragraph" w:styleId="Heading2">' +
+  '<w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>' +
   '<w:pPr><w:spacing w:before="240" w:after="80"/></w:pPr>' +
-  '<w:rPr><w:b/><w:bCs/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr>' +
+  '<w:rPr><w:b/><w:bCs/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr>' +
+  '</w:style>\n' +
+  '<w:style w:type="paragraph" w:styleId="Heading3">' +
+  '<w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>' +
+  '<w:pPr><w:spacing w:before="200" w:after="60"/></w:pPr>' +
+  '<w:rPr><w:b/><w:bCs/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr>' +
   '</w:style>\n' +
   '</w:styles>';
 }
@@ -2737,6 +2981,79 @@ document.addEventListener('DOMContentLoaded', () => {
     richAnalyzeEditor.addEventListener('input', () => { richAnalyzeEditor._userEdited = true; });
   }
 
+  const analyzeCanvas = document.getElementById('analyze-doc-canvas');
+  if (analyzeCanvas) {
+    analyzeCanvas.addEventListener('input', () => {
+      analyzeCanvas._userEdited = true;
+      const canvasText = analyzeCanvas.innerText || analyzeCanvas.textContent || '';
+      currentContractText = canvasText;
+    });
+  }
+
   updateAnalyzeNavBadge();
   updateSuggestionsNavBadge();
+
+  // ── Suggestions split-pane drag-to-resize ───────────────────────
+  (function initSugDivider() {
+    const divider  = document.getElementById('sug-divider');
+    const leftCol  = document.getElementById('sug-left-col');
+    const container = document.getElementById('suggestions-content');
+    if (!divider || !leftCol || !container) return;
+
+    const MIN_PX = 200;
+    const MAX_FRAC = 0.80;
+    let dragging = false;
+    let startX = 0;
+    let startW = 0;
+
+    divider.addEventListener('mousedown', (e) => {
+      dragging = true;
+      startX = e.clientX;
+      startW = leftCol.getBoundingClientRect().width;
+      divider.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const containerW = container.getBoundingClientRect().width;
+      const newW = Math.min(Math.max(startW + dx, MIN_PX), containerW * MAX_FRAC);
+      leftCol.style.flex = `0 0 ${newW}px`;
+      leftCol.style.width = `${newW}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      divider.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    });
+
+    // Touch support
+    divider.addEventListener('touchstart', (e) => {
+      dragging = true;
+      startX = e.touches[0].clientX;
+      startW = leftCol.getBoundingClientRect().width;
+      divider.classList.add('dragging');
+      e.preventDefault();
+    }, { passive: false });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      const dx = e.touches[0].clientX - startX;
+      const containerW = container.getBoundingClientRect().width;
+      const newW = Math.min(Math.max(startW + dx, MIN_PX), containerW * MAX_FRAC);
+      leftCol.style.flex = `0 0 ${newW}px`;
+      leftCol.style.width = `${newW}px`;
+    }, { passive: false });
+
+    document.addEventListener('touchend', () => {
+      dragging = false;
+      divider.classList.remove('dragging');
+    });
+  })();
 });
