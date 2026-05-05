@@ -17,12 +17,10 @@ function setOllamaModel(model) {
 //  App State
 // ===========================
 
-// Initial values reflect the 4 demo contracts already shown in the sidebar:
-//   Vendor Agreement (3 issues) + Employment Contract (5 issues) = 8 issues
 const INITIAL_STATE = {
-  _v: 1,
-  analyzed: 4,
-  issuesFound: 8,
+  _v: 2,
+  analyzed: 0,
+  issuesFound: 0,
   suggestionsApplied: 0,
   archived: 0,
   sessionUploads: 0,
@@ -31,7 +29,7 @@ const INITIAL_STATE = {
 let AppState = (() => {
   try {
     const saved = JSON.parse(localStorage.getItem('clauseai-state'));
-    return (saved && saved._v === 1) ? saved : { ...INITIAL_STATE };
+    return (saved && saved._v === 2) ? saved : { ...INITIAL_STATE };
   } catch { return { ...INITIAL_STATE }; }
 })();
 AppState.sessionUploads = 0; // reset on every page load
@@ -41,8 +39,198 @@ function saveState() {
 }
 
 // ===========================
-//  Demo contract list
+//  IndexedDB storage
 // ===========================
+
+const DB_NAME    = 'clauseai-db';
+const DB_VERSION = 1;
+let _idb = null;
+
+function openDB() {
+  if (_idb) return Promise.resolve(_idb);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('session'))   db.createObjectStore('session');
+      if (!db.objectStoreNames.contains('contracts')) db.createObjectStore('contracts', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('archive'))   db.createObjectStore('archive',   { keyPath: 'id' });
+    };
+    req.onsuccess = (e) => { _idb = e.target.result; resolve(_idb); };
+    req.onerror   = (e) => reject(e.target.error);
+  });
+}
+
+function idbPut(store, value, key) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx  = db.transaction(store, 'readwrite');
+    const req = key !== undefined ? tx.objectStore(store).put(value, key) : tx.objectStore(store).put(value);
+    req.onsuccess = () => resolve();
+    req.onerror   = e => reject(e.target.error);
+  }));
+}
+
+function idbGet(store, key) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const req = db.transaction(store, 'readonly').objectStore(store).get(key);
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  }));
+}
+
+function idbGetAll(store) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  }));
+}
+
+function idbDelete(store, key) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const req = db.transaction(store, 'readwrite').objectStore(store).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror   = e => reject(e.target.error);
+  }));
+}
+
+// ===========================
+//  Session / Archive / Sidebar persistence (IndexedDB)
+// ===========================
+
+function saveSession() {
+  if (!currentContractName) return;
+  idbPut('session', {
+    name: currentContractName,
+    text: (currentContractText || '').slice(0, 300000),
+    html: (currentContractHtml  || '').slice(0, 300000),
+    docxBuffer: currentContractDocxBuffer ? currentContractDocxBuffer.slice(0) : null,
+    analysis: currentAnalysis || null,
+    chatHistory: chatHistory.slice(-40),
+  }, 'current').catch(e => console.warn('saveSession failed', e));
+}
+
+function saveArchive() {
+  const promises = archivedContracts.map(e =>
+    idbPut('archive', {
+      id: e.id,
+      name: e.name,
+      text: (e.text || '').slice(0, 300000),
+      html: (e.html || '').slice(0, 300000),
+      docxBuffer: e.docxBuffer ? e.docxBuffer.slice(0) : null,
+      analysis: e.analysis || null,
+      archivedAt: e.archivedAt instanceof Date ? e.archivedAt.toISOString() : e.archivedAt,
+    }).catch(e2 => console.warn('saveArchive entry failed', e2))
+  );
+  // Also remove entries that were deleted from archivedContracts
+  const ids = new Set(archivedContracts.map(e => e.id));
+  idbGetAll('archive').then(all => {
+    all.forEach(e => { if (!ids.has(e.id)) idbDelete('archive', e.id).catch(() => {}); });
+  }).catch(() => {});
+  return Promise.all(promises);
+}
+
+function saveSidebar() {
+  const promises = [];
+  savedContracts.forEach(snap => {
+    promises.push(
+      idbPut('contracts', {
+        id: snap.id,
+        name: snap.name,
+        text: (snap.text || '').slice(0, 300000),
+        html: (snap.html || '').slice(0, 300000),
+        docxBuffer: snap.docxBuffer ? snap.docxBuffer.slice(0) : null,
+        analysis: snap.analysis || null,
+        issueCount: snap.issueCount || 0,
+        dateIso: snap.dateIso || new Date().toISOString(),
+      }).catch(e => console.warn('saveSidebar entry failed', e))
+    );
+  });
+  // Remove stale entries
+  const ids = new Set();
+  savedContracts.forEach(s => ids.add(s.id));
+  idbGetAll('contracts').then(all => {
+    all.forEach(e => { if (!ids.has(e.id)) idbDelete('contracts', e.id).catch(() => {}); });
+  }).catch(() => {});
+  return Promise.all(promises);
+}
+
+async function restorePersistedData() {
+  // 1. Restore archive
+  try {
+    const entries = await idbGetAll('archive');
+    if (entries && entries.length > 0) {
+      archivedContracts = entries.map(e => ({
+        ...e,
+        docxBuffer: e.docxBuffer ? e.docxBuffer : null,
+        archivedAt: e.archivedAt ? new Date(e.archivedAt) : new Date(),
+      }));
+      // Sort newest first
+      archivedContracts.sort((a, b) => b.archivedAt - a.archivedAt);
+      AppState.archived = archivedContracts.length;
+      saveState();
+      updateStatCards();
+    }
+  } catch(e) { console.warn('restoreArchive failed', e); }
+
+  // 2. Restore sidebar items
+  try {
+    const items = await idbGetAll('contracts');
+    if (items && items.length > 0) {
+      // Sort oldest first so newest ends up on top after insertBefore
+      items.sort((a, b) => new Date(a.dateIso) - new Date(b.dateIso));
+      const list = document.getElementById('contract-list');
+      items.forEach(snap => {
+        savedContracts.set(snap.id, { ...snap });
+        if (!list) return;
+        const status = snap.issueCount === 0 ? 'ok' : snap.issueCount <= 3 ? 'warn' : 'risk';
+        const date = snap.dateIso
+          ? new Date(snap.dateIso).toLocaleDateString(currentLocale(), { month: 'short', day: 'numeric' })
+          : '';
+        const div = document.createElement('div');
+        div.className = 'contract-item';
+        div.dataset.dynamic = '1';
+        div.dataset.issueCount = String(snap.issueCount || 0);
+        div.dataset.dateIso = snap.dateIso || '';
+        div.dataset.contractId = snap.id;
+        div.onclick = function() {
+          document.querySelectorAll('.contract-item').forEach(c => c.classList.remove('active'));
+          this.classList.add('active');
+          restoreSavedContract(this.dataset.contractId);
+        };
+        div.innerHTML = `
+          <div class="contract-name">${escapeHtml(snap.name)}</div>
+          <div class="contract-meta">
+            <span class="status-dot status-${status}"></span>
+            <span>${formatDynamicMeta(snap.issueCount || 0, date)}</span>
+          </div>`;
+        list.insertBefore(div, list.firstChild);
+      });
+      savedContractSeq = items.length + 1;
+    }
+  } catch(e) { console.warn('restoreSidebar failed', e); }
+
+  // 3. Restore last active session
+  try {
+    const session = await idbGet('session', 'current');
+    if (session && session.name && session.analysis) {
+      currentContractName      = session.name;
+      currentContractText      = session.text || '';
+      currentContractHtml      = session.html || '';
+      currentContractDocxBuffer = session.docxBuffer ? session.docxBuffer : null;
+      currentAnalysis          = session.analysis;
+      chatHistory              = Array.isArray(session.chatHistory) ? session.chatHistory : [];
+      renderAnalysis(session.name, currentAnalysis, { trackState: false, addToSidebar: false });
+      // Restore previous chat messages (renderAnalysis already sets initial AI msg)
+      chatHistory.forEach(msg => addMessage(msg.role === 'user' ? 'user' : 'ai', msg.content));
+      // Mark matching sidebar item as active
+      document.querySelectorAll('.contract-item').forEach(item => {
+        const snap = savedContracts.get(item.dataset.contractId);
+        item.classList.toggle('active', !!(snap && snap.name === session.name));
+      });
+    }
+  } catch(e) { console.warn('restoreSession failed', e); }
+}
 
 const DEMO_CONTRACTS = [
   { name: "Vendor Agreement — Acme Corp",  issues: 3, status: "warn", date: "Apr 28" },
@@ -227,7 +415,7 @@ ${issues}
 Suggestions:
 ${suggestions}`;
   }
-  return `You are ClauseAI, a contract analysis assistant. The user is viewing a Vendor Services Agreement between Acme Corp and ClientCo LLC with 3 known issues: IP ownership contradiction (§2 vs §5), missing payment amount (§1), and a 2-year confidentiality period below the 5-year industry standard. Answer questions concisely and professionally. Keep responses under 150 words. Always respond in ${responseLanguage}, matching the page language. Use markdown emphasis and bullets where useful.`;
+  return `You are ClauseAI, a contract analysis assistant. No contract is currently loaded. Ask the user to upload a contract to get started. Keep responses under 150 words. Always respond in ${responseLanguage}, matching the page language.`;
 }
 
 // ===========================
@@ -262,7 +450,7 @@ const TRANSLATIONS = {
     'stat.issues': 'Issues Found',
     'stat.suggestions': 'Suggestions Applied',
     'stat.archived': 'Archived',
-    'section.contract': 'Current Contract — Vendor Agreement, Acme Corp',
+    'section.contract': 'Current Contract',
     'section.contractDynamic': 'Current Contract — {name}',
     'viewer.expand': 'Expand',
     'viewer.collapse': 'Collapse',
@@ -277,7 +465,7 @@ const TRANSLATIONS = {
     'panel.aiReady': 'AI Ready',
     'chat.placeholder': 'Ask about a clause, risk, or suggestion...',
     'chat.analyzing': 'Analyzing...',
-    'chat.initial': 'I\'ve analyzed the Vendor Agreement. I found <strong>3 issues</strong>: an IP ownership contradiction, a missing payment amount, and a below-standard confidentiality period. Ask me anything about this contract.',
+    'chat.initial': 'Upload a contract and I\'ll analyze it for risks, missing clauses, and suggestions.',
     'msg.analyzing': 'Analyzing: ',
     'msg.archive': 'Archive contains {n} contract{s}. All are indexed and searchable.',
     'msg.avatar.ai': 'AI',
@@ -312,6 +500,10 @@ const TRANSLATIONS = {
     'view.archive.archivedOn': 'Archived {date}',
     'view.archive.download': '↓ Download',
     'view.archive.close': '✕',
+    'view.archive.groupThisMonth': 'This Month',
+    'view.archive.groupLastMonth': 'Last Month',
+    'view.archive.groupOlder': 'Older',
+    'view.suggestions.archive': '⊞ Archive',
     'view.suggestions.title': 'Recommendations',
     'view.suggestions.subtitle': 'Detailed AI recommendations for the current contract',
     'view.suggestions.empty': 'No recommendations yet',
@@ -331,7 +523,7 @@ const TRANSLATIONS = {
     'theme.system': 'Sistem Teması',
     'nav.workspace': 'Çalışma Alanı',
     'nav.dashboard': 'Gösterge Paneli',
-    'nav.analyze': 'Analiz Et',
+    'nav.analyze': 'Hatalar ve Riskler',
     'nav.archive': 'Arşiv',
     'nav.suggestions': 'Öneriler',
     'nav.recentContracts': 'Son Sözleşmeler',
@@ -349,7 +541,7 @@ const TRANSLATIONS = {
     'stat.issues': 'Bulunan Sorunlar',
     'stat.suggestions': 'Uygulanan Öneriler',
     'stat.archived': 'Arşivlendi',
-    'section.contract': 'Mevcut Sözleşme — Satıcı Anlaşması, Acme Corp',
+    'section.contract': 'Mevcut Sözleşme',
     'section.contractDynamic': 'Mevcut Sözleşme — {name}',
     'viewer.expand': 'Genişlet',
     'viewer.collapse': 'Daralt',
@@ -364,7 +556,7 @@ const TRANSLATIONS = {
     'panel.aiReady': 'Yapay Zeka Hazır',
     'chat.placeholder': 'Bir madde, risk veya öneri hakkında sorun...',
     'chat.analyzing': 'Analiz ediliyor...',
-    'chat.initial': 'Satıcı Anlaşmasını analiz ettim. <strong>3 sorun</strong> tespit ettim: bir fikri mülkiyet çelişkisi, belirtilmemiş bir ödeme tutarı ve standart altı bir gizlilik süresi. Bu sözleşme hakkında her şeyi sorabilirsiniz.',
+    'chat.initial': 'Sözleşmenizi yükleyin, yapay zeka analiz etsin.',
     'msg.analyzing': 'Analiz ediliyor: ',
     'msg.archive': 'Arşivde {n} sözleşme{s} bulunuyor. Tümü indekslenmiş ve aranabilir.',
     'msg.avatar.ai': 'YZ',
@@ -399,6 +591,10 @@ const TRANSLATIONS = {
     'view.archive.archivedOn': '{date} tarihinde arşivlendi',
     'view.archive.download': '↓ İndir',
     'view.archive.close': '✕',
+    'view.archive.groupThisMonth': 'Bu Ay',
+    'view.archive.groupLastMonth': 'Geçen Ay',
+    'view.archive.groupOlder': 'Eski',
+    'view.suggestions.archive': '⊞ Arşivle',
     'view.suggestions.title': 'Öneriler',
     'view.suggestions.subtitle': 'Mevcut sözleşme için ayrıntılı yapay zeka önerileri',
     'view.suggestions.empty': 'Henüz öneri yok',
@@ -1979,6 +2175,7 @@ async function applyDocumentEdit(suggestion) {
     if (rich)     { rich.style.display = ''; rich.innerHTML = buildEditableRichHtml(); rich._userEdited = false; }
     if (editor)   { editor.style.display = 'none'; editor.value = modified; editor._userEdited = false; }
     if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
+    saveSession();
   } else {
     // ── Fallback: narrow regex replacements + prepend annotation ──
     const combined = `${suggestion?.title || ''} ${suggestion?.body || ''}`.toLowerCase();
@@ -2097,9 +2294,11 @@ function renderAnalysis(filename, analysis, options = {}) {
   // Refresh secondary views if they are active
   if (document.getElementById('view-analyze')?.style.display !== 'none') refreshAnalyzeView();
   if (document.getElementById('view-suggestions')?.style.display !== 'none') refreshSuggestionsView();
+
+  saveSession();
 }
 
-function snapshotCurrentContract(name) {
+function snapshotCurrentContract(name, issueCount, dateIso) {
   return {
     id: `uploaded-${savedContractSeq++}`,
     name,
@@ -2107,6 +2306,8 @@ function snapshotCurrentContract(name) {
     html: currentContractHtml || '',
     docxBuffer: currentContractDocxBuffer ? currentContractDocxBuffer.slice(0) : null,
     analysis: JSON.parse(JSON.stringify(currentAnalysis || {})),
+    issueCount: issueCount || 0,
+    dateIso: dateIso || new Date().toISOString(),
   };
 }
 
@@ -2129,8 +2330,9 @@ function addContractToSidebar(name, issueCount) {
   const now = new Date();
   const today = now.toLocaleDateString(currentLocale(), { month: 'short', day: 'numeric' });
   const div = document.createElement('div');
-  const snapshot = snapshotCurrentContract(name);
+  const snapshot = snapshotCurrentContract(name, issueCount, now.toISOString());
   savedContracts.set(snapshot.id, snapshot);
+  saveSidebar();
   div.className = 'contract-item';
   div.dataset.dynamic = '1';
   div.dataset.issueCount = String(issueCount);
@@ -2160,7 +2362,7 @@ function updateStatCards() {
   document.getElementById('stat-archived-val').textContent   = s.archived;
 
   document.getElementById('stat-analyzed-sub').textContent =
-    s.sessionUploads > 0 ? `↑ ${s.sessionUploads} uploaded this session` : '4 demo contracts loaded';
+    s.sessionUploads > 0 ? `↑ ${s.sessionUploads} uploaded this session` : s.analyzed > 0 ? `${s.analyzed} contract${s.analyzed !== 1 ? 's' : ''}` : '—';
   document.getElementById('stat-issues-sub').textContent =
     s.issuesFound > 0 ? `across ${s.analyzed} contract${s.analyzed !== 1 ? 's' : ''}` : '—';
   document.getElementById('stat-suggestions-sub').textContent =
@@ -2287,12 +2489,14 @@ function archiveCurrentContract() {
     name: currentContractName,
     text: currentContractText || '',
     html: currentContractHtml || '',
+    docxBuffer: currentContractDocxBuffer ? currentContractDocxBuffer.slice(0) : null,
     analysis: currentAnalysis ? JSON.parse(JSON.stringify(currentAnalysis)) : null,
     archivedAt: new Date(),
   };
   archivedContracts.unshift(entry);
   AppState.archived = archivedContracts.length;
   saveState();
+  saveArchive();
   updateStatCards();
   // Give feedback
   const btn = document.getElementById('btn-archive-contract');
@@ -2407,20 +2611,35 @@ function downloadEditedContract() {
   const richEditor = document.getElementById('analyze-doc-rich');
   const canvasEl  = document.getElementById('analyze-doc-canvas');
 
-  // Prefer rich HTML source for formatting-preserving DOCX export
   let html = '';
   let text = '';
+
   if (richEditor && richEditor.style.display !== 'none') {
+    // Rich editor: grab live innerHTML (user may have edited it)
     html = richEditor.innerHTML || '';
     text = richEditor.innerText || currentContractText || '';
   } else if (canvasEl && canvasEl.style.display !== 'none') {
-    // For DOCX canvas: use currentContractHtml if available (the rich mammoth HTML)
-    html = currentContractHtml || canvasEl.innerHTML || '';
-    text = currentContractText || canvasEl.innerText || '';
+    // DOCX canvas: NEVER use canvasEl.innerHTML (docx-preview widget markup)
+    // Use the mammoth HTML stored in currentContractHtml for faithful export
+    html = currentContractHtml || '';
+    text = currentContractText || '';
   } else {
     text = editor ? editor.value : (currentContractText || '');
     html = currentContractHtml || '';
   }
+
+  // Last-resort: if html is still empty but text exists, convert text to paragraphs
+  if (!html.trim() && text.trim()) {
+    html = text.split(/\r?\n/).map(l => {
+      const trimmed = l.trim();
+      if (!trimmed) return '';
+      const escaped = trimmed.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      // Simple heading detection: all-caps short text (Turkish + Latin)
+      const isHeading = trimmed === trimmed.toUpperCase() && /[A-ZÇĞİÖŞÜ]/.test(trimmed) && trimmed.length < 100;
+      return isHeading ? `<h3>${escaped}</h3>` : `<p>${escaped}</p>`;
+    }).join('');
+  }
+
   const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_edited';
   downloadAsDocx(text, name, html);
 }
@@ -2441,22 +2660,53 @@ function refreshArchiveView() {
   if (content) content.style.display = '';
 
   const list = document.getElementById('archive-list');
-  if (list) {
-    list.innerHTML = archivedContracts.map((entry, idx) => {
-      const dateStr = entry.archivedAt.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      const issueCount = entry.analysis?.issues?.length || 0;
-      const status = issueCount === 0 ? 'ok' : issueCount <= 3 ? 'warn' : 'risk';
-      return `
+  if (!list) return;
+
+  const now = new Date();
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+  const groups = [
+    { key: 'thisMonth',  label: t('view.archive.groupThisMonth'), entries: [] },
+    { key: 'lastMonth',  label: t('view.archive.groupLastMonth'), entries: [] },
+    { key: 'older',      label: t('view.archive.groupOlder'),     entries: [] },
+  ];
+
+  archivedContracts.forEach((entry, idx) => {
+    const d = entry.archivedAt instanceof Date ? entry.archivedAt : new Date(entry.archivedAt);
+    if (d >= thisMonthStart)      groups[0].entries.push({ entry, idx });
+    else if (d >= lastMonthStart) groups[1].entries.push({ entry, idx });
+    else                          groups[2].entries.push({ entry, idx });
+  });
+
+  list.innerHTML = groups
+    .filter(g => g.entries.length > 0)
+    .map(g => {
+      const rows = g.entries.map(({ entry, idx }) => {
+        const d = entry.archivedAt instanceof Date ? entry.archivedAt : new Date(entry.archivedAt);
+        const dateStr = d.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const fullDateStr = d.toLocaleString(currentLocale(), { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const issueCount = entry.analysis?.issues?.length || 0;
+        const status = issueCount === 0 ? 'ok' : issueCount <= 3 ? 'warn' : 'risk';
+        return `
         <div class="archive-row ${activeArchivedIndex === idx ? 'active' : ''}" onclick="openArchivedContract(${idx})">
           <span class="status-dot status-${status}" style="flex-shrink:0;margin-top:2px"></span>
           <div class="archive-row-info">
             <div class="archive-row-name">${escapeHtml(entry.name)}</div>
-            <div class="archive-row-meta">${escapeHtml(t('view.archive.archivedOn').replace('{date}', dateStr))} · ${issueCount === 0 ? t('meta.cleanDynamic') : t('meta.issuesDynamic').replace('{n}', issueCount).replace('{s}', pluralSuffix(issueCount))}</div>
+            <div class="archive-row-meta">
+              <span class="archive-row-date">🗓 ${escapeHtml(fullDateStr)}</span>
+              <span class="archive-row-dot">·</span>
+              ${issueCount === 0 ? t('meta.cleanDynamic') : t('meta.issuesDynamic').replace('{n}', issueCount).replace('{s}', pluralSuffix(issueCount))}
+            </div>
           </div>
           <button class="btn-sm" onclick="event.stopPropagation(); downloadArchivedContractByIdx(${idx})" style="margin-left:auto;flex-shrink:0" data-i18n="view.archive.download">↓</button>
         </div>`;
+      }).join('');
+      return `<div class="archive-group">
+        <div class="archive-group-label">${escapeHtml(g.label)}</div>
+        ${rows}
+      </div>`;
     }).join('');
-  }
 }
 
 function openArchivedContract(idx) {
@@ -2472,11 +2722,34 @@ function openArchivedContract(idx) {
 
   if (viewer) viewer.style.display = '';
   if (titleEl) titleEl.textContent = entry.name;
-  if (dateEl) dateEl.textContent = entry.archivedAt.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const archivedDate = entry.archivedAt instanceof Date ? entry.archivedAt : new Date(entry.archivedAt);
+  if (dateEl) dateEl.textContent = archivedDate.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   if (docEl) {
-    if (entry.html) {
+    docEl.innerHTML = '';
+    if (entry.docxBuffer && window.docx?.renderAsync && window.JSZip) {
+      docEl.classList.remove('is-rich-doc');
+      docEl.classList.add('is-docx');
+      docEl.innerHTML = '<div class="docx-canvas"></div>';
+      const canvas = docEl.querySelector('.docx-canvas');
+      window.docx.renderAsync(entry.docxBuffer.slice(0), canvas, null, {
+        inWrapper: true, breakPages: true, className: 'docx',
+        ignoreWidth: false, ignoreHeight: false, useBase64URL: true,
+      }).catch(() => {
+        // fallback to HTML
+        docEl.classList.remove('is-docx');
+        if (entry.html && entry.html.trim()) {
+          docEl.classList.add('is-rich-doc');
+          docEl.innerHTML = `<div class="word-doc-body">${entry.html}</div>`;
+        } else {
+          docEl.innerHTML = `<pre class="plain-doc-body">${escapeHtml(entry.text)}</pre>`;
+        }
+      });
+    } else if (entry.html && entry.html.trim()) {
+      docEl.classList.remove('is-docx');
+      docEl.classList.add('is-rich-doc');
       docEl.innerHTML = `<div class="word-doc-body">${entry.html}</div>`;
     } else {
+      docEl.classList.remove('is-docx', 'is-rich-doc');
       docEl.innerHTML = `<pre class="plain-doc-body">${escapeHtml(entry.text)}</pre>`;
     }
   }
@@ -2498,7 +2771,7 @@ function downloadArchivedContractByIdx(idx) {
   const entry = archivedContracts[idx];
   if (!entry) return;
   const name = (entry.name || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_archived';
-  downloadAsDocx(entry.text, name);
+  downloadAsDocx(entry.text, name, entry.html || '');
 }
 
 // ===========================
@@ -2685,21 +2958,44 @@ function htmlToDocxParas(htmlString) {
         const txt = child.textContent;
         if (!txt) continue;
         let rPr = '';
-        if (opts.bold)      rPr += '<w:b/><w:bCs/>';
-        if (opts.italic)    rPr += '<w:i/><w:iCs/>';
-        if (opts.underline) rPr += '<w:u w:val="single"/>';
-        out += `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${esc(txt)}</w:t></w:r>`;
+        if (opts.bold)         rPr += '<w:b/><w:bCs/>';
+        if (opts.italic)       rPr += '<w:i/><w:iCs/>';
+        if (opts.underline)    rPr += '<w:u w:val="single"/>';
+        if (opts.strikethrough || opts.deleted) rPr += '<w:strike/>';
+        const color = opts.deleted ? ' w:color="FF0000"' : opts.inserted ? ' w:color="00B050"' : '';
+        const colorRPr = color ? `<w:rPr><w:color${color}/></w:rPr>` : '';
+        out += `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : colorRPr}<w:t xml:space="preserve">${esc(txt)}</w:t></w:r>`;
       } else if (child.nodeType === 1) { // ELEMENT_NODE
         const t = child.tagName.toLowerCase();
         const next = Object.assign({}, opts);
         if (t === 'strong' || t === 'b') next.bold = true;
         if (t === 'em' || t === 'i') next.italic = true;
         if (t === 'u') next.underline = true;
+        if (t === 'del') next.deleted = true;
+        if (t === 'ins') next.inserted = true;
         if (t === 'br') { out += '<w:r><w:br/></w:r>'; continue; }
         out += inlineRuns(child, next);
       }
     }
     return out;
+  }
+
+  // Detect if a <p> is effectively a heading:
+  // mammoth renders headings as <p><b>TEXT</b></p> or all-caps short text or "1. Section"
+  function isHeadingParagraph(el) {
+    const text = el.textContent.trim();
+    if (!text || text.length > 150) return false;
+    // ALL-CAPS heuristic (Turkish + Latin)
+    if (text === text.toUpperCase() && /[A-ZÇĞİÖŞÜ]/.test(text) && text.length < 120) return true;
+    // "N. SectionName" pattern (numbered section)
+    if (/^\d+\.\s+[A-ZÇĞİÖŞÜ]/i.test(text) && text.length < 150) return true;
+    // All children are bold/strong (mammoth heading pattern)
+    const childElements = Array.from(el.childNodes).filter(n => n.nodeType === 1);
+    if (childElements.length > 0 && childElements.every(n => ['strong','b','span'].includes(n.tagName?.toLowerCase()))) {
+      const boldCount = childElements.filter(n => ['strong','b'].includes(n.tagName?.toLowerCase())).length;
+      if (boldCount > 0 && boldCount === childElements.length && text.length < 100) return true;
+    }
+    return false;
   }
 
   function processEl(el) {
@@ -2713,16 +3009,19 @@ function htmlToDocxParas(htmlString) {
 
     if (/^h[1-6]$/.test(tag)) {
       const level = parseInt(tag[1], 10);
-      const szMap = [36, 32, 28, 26, 24, 22];
-      const sz = szMap[level - 1] || 26;
       const runs = inlineRuns(el, { bold: true });
       const styleId = level <= 2 ? 'Heading1' : level <= 4 ? 'Heading2' : 'Heading3';
       paras.push(`<w:p><w:pPr><w:pStyle w:val="${styleId}"/><w:spacing w:before="240" w:after="80"/></w:pPr>${runs}</w:p>`);
     } else if (tag === 'p') {
-      const runs = inlineRuns(el);
-      paras.push(runs
-        ? `<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>${runs}</w:p>`
-        : '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
+      if (isHeadingParagraph(el)) {
+        const runs = inlineRuns(el, { bold: true });
+        paras.push(`<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:before="200" w:after="80"/></w:pPr>${runs}</w:p>`);
+      } else {
+        const runs = inlineRuns(el);
+        paras.push(runs
+          ? `<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>${runs}</w:p>`
+          : '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
+      }
     } else if (tag === 'li') {
       const isOl = el.parentElement && el.parentElement.tagName.toLowerCase() === 'ol';
       const runs = inlineRuns(el);
@@ -2735,7 +3034,6 @@ function htmlToDocxParas(htmlString) {
     } else if (tag === 'br') {
       paras.push('<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
     } else if (tag === 'table') {
-      // Flatten table rows as plain paragraphs
       el.querySelectorAll('tr').forEach(tr => {
         const cells = Array.from(tr.querySelectorAll('td, th')).map(td => td.textContent.trim()).filter(Boolean);
         if (cells.length) {
@@ -2744,7 +3042,7 @@ function htmlToDocxParas(htmlString) {
         }
       });
     } else {
-      // span, strong, em, etc at block level — wrap as paragraph if has text
+      // span, strong, em, del, ins etc. at block level
       const runs = inlineRuns(el);
       if (runs) paras.push(`<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>${runs}</w:p>`);
       else { for (let i = 0; i < el.childNodes.length; i++) processEl(el.childNodes[i]); }
@@ -2949,7 +3247,7 @@ function setLoading(on) {
 // ===========================
 //  Init
 // ===========================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   applyTheme(getInitialTheme(), false);
   // Restore saved model preference
   const savedModel = localStorage.getItem('clauseai-model');
@@ -2969,7 +3267,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   setLang('tr');
   updateStatCards();
-
+  await restorePersistedData();
   // Track manual edits in the analyze editor so we don't overwrite them on re-render
   const analyzeEditor = document.getElementById('analyze-doc-editor');
   if (analyzeEditor) {
@@ -2985,8 +3283,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (analyzeCanvas) {
     analyzeCanvas.addEventListener('input', () => {
       analyzeCanvas._userEdited = true;
+      // Canvas has widget/rich content - preserve both text and HTML
       const canvasText = analyzeCanvas.innerText || analyzeCanvas.textContent || '';
+      const canvasHtml = analyzeCanvas.innerHTML || '';
       currentContractText = canvasText;
+      // Only update currentContractHtml if we have meaningful HTML (avoid empty widget markup)
+      if (canvasHtml.trim().length > 100) currentContractHtml = canvasHtml;
     });
   }
 

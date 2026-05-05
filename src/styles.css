@@ -485,12 +485,65 @@ ins.tc-ins {
 body.theme-dark del.tc-del { background: rgba(239,68,68,0.2); color: #f87171; text-decoration-color: #f87171; }
 body.theme-dark ins.tc-ins { background: rgba(16,185,129,0.2); color: #34d399; text-decoration-color: rgba(52,211,153,0.6); }
 .contract-doc.is-rich-doc .word-doc-body {
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 13.5px;
+  line-height: 1.8;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  color: var(--text-primary);
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 8px 0;
 }
 .contract-doc.is-rich-doc .word-doc-body p,
 .contract-doc.is-rich-doc .word-doc-body li {
   margin-bottom: 10px;
+  text-align: justify;
+}
+.contract-doc.is-rich-doc .word-doc-body h1,
+.contract-doc.is-rich-doc .word-doc-body h2,
+.contract-doc.is-rich-doc .word-doc-body h3,
+.contract-doc.is-rich-doc .word-doc-body h4 {
+  font-family: 'Instrument Sans', sans-serif;
+  font-weight: 700;
+  margin: 20px 0 8px;
+  color: var(--text-primary);
+  text-align: center;
+}
+.contract-doc.is-rich-doc .word-doc-body h1 { font-size: 17px; text-transform: uppercase; letter-spacing: 0.4px; }
+.contract-doc.is-rich-doc .word-doc-body h2 { font-size: 15px; }
+.contract-doc.is-rich-doc .word-doc-body h3 { font-size: 14px; text-align: left; }
+.contract-doc.is-rich-doc .word-doc-body h4 { font-size: 13.5px; text-align: left; }
+.contract-doc.is-rich-doc .word-doc-body strong,
+.contract-doc.is-rich-doc .word-doc-body b { font-weight: 700; }
+.contract-doc.is-rich-doc .word-doc-body em,
+.contract-doc.is-rich-doc .word-doc-body i { font-style: italic; }
+.contract-doc.is-rich-doc .word-doc-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 13px;
+}
+.contract-doc.is-rich-doc .word-doc-body td,
+.contract-doc.is-rich-doc .word-doc-body th {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+}
+.contract-doc.is-rich-doc .word-doc-body th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+.contract-doc.is-rich-doc .word-doc-body ul,
+.contract-doc.is-rich-doc .word-doc-body ol {
+  padding-left: 28px;
+  margin-bottom: 10px;
+}
+/* mammoth renders bold-only paragraphs as <p><strong>…</strong></p> — treat as section title */
+.contract-doc.is-rich-doc .word-doc-body p:has(> strong:only-child),
+.contract-doc.is-rich-doc .word-doc-body p:has(> b:only-child) {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 14px;
+  text-align: left;
+  margin-top: 16px;
 }
 .issue-anchor {
   background: rgba(245, 158, 11, 0.24);
@@ -1046,6 +1099,27 @@ body.theme-dark .tag-risk       { background: #4a044e; color: #f5d0fe; }
   flex-direction: column;
   gap: 6px;
   margin-bottom: 20px;
+}
+.archive-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.archive-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 10px 4px 4px;
+}
+.archive-row-dot {
+  margin: 0 4px;
+  opacity: 0.5;
+}
+.archive-row-date {
+  color: var(--text-tertiary);
 }
 .archive-row {
   display: flex;
