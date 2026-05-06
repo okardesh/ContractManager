@@ -198,6 +198,17 @@ async function restorePersistedData() {
           this.classList.add('active');
           restoreSavedContract(this.dataset.contractId);
         };
+        // Right-click handler for context menu
+        div.oncontextmenu = function (e) {
+          e.preventDefault();
+          contextMenuTarget = this;
+          const menu = document.getElementById('contract-context-menu');
+          if (menu) {
+            menu.style.left = e.pageX + 'px';
+            menu.style.top = e.pageY + 'px';
+            menu.classList.add('show');
+          }
+        };
         div.innerHTML = `
           <div class="contract-name">${escapeHtml(snap.name)}</div>
           <div class="contract-meta">
