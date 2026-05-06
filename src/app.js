@@ -859,6 +859,11 @@ function sanitizeDocHtml(html) {
 
 async function readContractFileContent(file) {
   const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'pdf') {
+    const text = await readPdfAsText(file);
+    return { text, html: '', docxBuffer: null, isRichDoc: false, format: 'pdf' };
+  }
+
   if (ext === 'docx') {
     const arrayBuffer = await file.arrayBuffer();
     const [textResult, htmlResult] = await Promise.all([
@@ -870,11 +875,29 @@ async function readContractFileContent(file) {
       html: sanitizeDocHtml(htmlResult.value || ''),
       docxBuffer: arrayBuffer,
       isRichDoc: true,
+      format: 'docx',
     };
   }
 
+  if (ext === 'doc') {
+    const text = await readLegacyDocAsText(file);
+    return { text, html: '', docxBuffer: null, isRichDoc: false, format: 'doc' };
+  }
+
   const text = await readFileAsText(file);
-  return { text, html: '', docxBuffer: null, isRichDoc: false };
+  return { text, html: '', docxBuffer: null, isRichDoc: false, format: ext || 'txt' };
+}
+
+function showLegacyDocNotice(filename) {
+  const docEl = document.getElementById('contract-doc');
+  if (!docEl) return;
+  const notice = document.createElement('div');
+  notice.className = 'legacy-doc-notice';
+  notice.innerHTML = currentLang === 'tr'
+    ? `<strong>Not:</strong> Bu dosya eski <b>.doc</b> formatında. Tarayıcıda gerçek Word görünümü yalnızca <b>.docx</b> için desteklenir. En iyi görünüm için dosyayı .docx'e çevirip tekrar yükleyin.`
+    : `<strong>Note:</strong> This file is legacy <b>.doc</b>. True in-browser Word view is only supported for <b>.docx</b>. For best fidelity, convert to .docx and upload again.`;
+  docEl.prepend(notice);
+  syncContractViewerModal();
 }
 
 async function readPdfAsText(file) {
@@ -893,6 +916,31 @@ async function readDocxAsText(file) {
   const arrayBuffer = await file.arrayBuffer();
   const result = await mammoth.extractRawText({ arrayBuffer });
   return result.value;
+}
+
+async function readLegacyDocAsText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let raw = '';
+  try {
+    raw = new TextDecoder('latin1').decode(bytes);
+  } catch {
+    raw = String.fromCharCode(...bytes);
+  }
+
+  // Keep readable pieces only (legacy .doc cannot be rendered like .docx in-browser)
+  const cleaned = raw
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const printable = (line.match(/[A-Za-z0-9\s.,;:()'"\-\/&%$€₺]/g) || []).length;
+      return line.length > 3 && printable / line.length > 0.68;
+    })
+    .join('\n');
+
+  return cleaned || 'Legacy .doc format detected. Convert to .docx for accurate Word-like viewing.';
 }
 
 // ===========================
@@ -2367,6 +2415,9 @@ async function handleFileUpload(event) {
     const titleEl = document.querySelector('[data-i18n="section.contract"]');
     if (titleEl) titleEl.textContent = formatDynamicContractTitle(name);
     await renderContractDocument(name);
+    if (payload.format === 'doc') {
+      showLegacyDocNotice(file.name);
+    }
 
     const analysis = await analyzeContractWithLLM(text, file.name);
     currentAnalysis = analysis;
@@ -3404,6 +3455,30 @@ document.addEventListener('DOMContentLoaded', async () => {
 //  Context Menu
 // ===========================
 
+function hideContractContextMenu() {
+  const menu = document.getElementById('contract-context-menu');
+  if (menu) menu.classList.remove('show');
+  contextMenuTarget = null;
+}
+
+function showContractContextMenu(itemEl, x, y) {
+  const menu = document.getElementById('contract-context-menu');
+  if (!menu || !itemEl) return;
+  contextMenuTarget = itemEl;
+
+  // Measure menu to keep it inside viewport
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  menu.classList.add('show');
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.scrollX + window.innerWidth - rect.width - 8;
+  const maxY = window.scrollY + window.innerHeight - rect.height - 8;
+  const left = Math.max(window.scrollX + 8, Math.min(x, maxX));
+  const top = Math.max(window.scrollY + 8, Math.min(y, maxY));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 function removeContract() {
   if (!contextMenuTarget) return;
   const contractId = contextMenuTarget.dataset.contractId;
@@ -3417,16 +3492,31 @@ function removeContract() {
   
   // Save state
   saveSidebar();
-  
+
   // Close context menu
-  const menu = document.getElementById('contract-context-menu');
-  if (menu) menu.classList.remove('show');
-  contextMenuTarget = null;
+  hideContractContextMenu();
 }
 
-// Close context menu on click anywhere else
+// Reliable delegated right-click handler for all current/future contract items
+document.addEventListener('contextmenu', (e) => {
+  const item = e.target && e.target.closest
+    ? e.target.closest('.contract-item[data-contract-id]')
+    : null;
+  if (!item) return;
+  e.preventDefault();
+  e.stopPropagation();
+  showContractContextMenu(item, e.pageX, e.pageY);
+});
+
+// Close context menu on normal click, escape, or window blur
 document.addEventListener('click', () => {
-  const menu = document.getElementById('contract-context-menu');
-  if (menu) menu.classList.remove('show');
-  contextMenuTarget = null;
+  hideContractContextMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') hideContractContextMenu();
+});
+
+window.addEventListener('blur', () => {
+  hideContractContextMenu();
 });
