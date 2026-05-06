@@ -352,13 +352,18 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
     if (typeof pdfjsLib !== 'undefined') {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
     }
   </script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://unpkg.com/docx-preview@0.3.3/dist/docx-preview.min.js"></script>
+
+  <!-- Context menu for contract items -->
+  <div class="context-menu" id="contract-context-menu">
+    <div class="context-menu-item" onclick="removeContract()">🗑 Remove</div>
+  </div>
+
   <script src="src/app.js"></script>
 </body>
 </html>

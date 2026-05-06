@@ -254,6 +254,37 @@ body.theme-dark .logo-image {
 .status-warn { background: #f59e0b; }
 .status-risk { background: #ef4444; }
 
+/* ---- Context menu ---- */
+.context-menu {
+  position: fixed;
+  background: var(--bg-primary);
+  border: 0.5px solid var(--border-light);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  display: none;
+  min-width: 140px;
+}
+.context-menu.show {
+  display: block;
+}
+.context-menu-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.context-menu-item:hover {
+  background: var(--bg-secondary);
+}
+.context-menu-item:first-child {
+  border-radius: 6px 6px 0 0;
+}
+.context-menu-item:last-child {
+  border-radius: 0 0 6px 6px;
+}
+
 /* ---- Main ---- */
 .main { overflow-y: auto; background: var(--bg-tertiary); }
 

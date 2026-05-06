@@ -284,6 +284,7 @@ const savedContracts = new Map();
 let originalDocHtml = null;      // snapshot before first suggestion applied
 let originalContractText = null; // plain-text snapshot for diff
 let compareModeActive = false;
+let contextMenuTarget = null;    // track which contract item was right-clicked
 
 function buildChatSystemPrompt() {
   const responseLanguage = getResponseLanguageLabel();
@@ -2249,6 +2250,17 @@ function addContractToSidebar(name, issueCount) {
     this.classList.add('active');
     restoreSavedContract(this.dataset.contractId);
   };
+  // Right-click handler for context menu
+  div.oncontextmenu = function (e) {
+    e.preventDefault();
+    contextMenuTarget = this;
+    const menu = document.getElementById('contract-context-menu');
+    if (menu) {
+      menu.style.left = e.pageX + 'px';
+      menu.style.top = e.pageY + 'px';
+      menu.classList.add('show');
+    }
+  };
   div.innerHTML = `
     <div class="contract-name">${escapeHtml(name)}</div>
     <div class="contract-meta">
@@ -3375,4 +3387,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       divider.classList.remove('dragging');
     });
   })();
+});
+
+// ===========================
+//  Context Menu
+// ===========================
+
+function removeContract() {
+  if (!contextMenuTarget) return;
+  const contractId = contextMenuTarget.dataset.contractId;
+  if (!contractId) return;
+
+  // Remove from DOM
+  contextMenuTarget.remove();
+  
+  // Remove from savedContracts
+  savedContracts.delete(contractId);
+  
+  // Save state
+  saveSidebar();
+  
+  // Close context menu
+  const menu = document.getElementById('contract-context-menu');
+  if (menu) menu.classList.remove('show');
+  contextMenuTarget = null;
+}
+
+// Close context menu on click anywhere else
+document.addEventListener('click', () => {
+  const menu = document.getElementById('contract-context-menu');
+  if (menu) menu.classList.remove('show');
+  contextMenuTarget = null;
 });
