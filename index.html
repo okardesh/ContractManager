@@ -148,34 +148,9 @@
           <div class="panel-header">
             <span class="panel-icon">⚠</span>
             <span class="panel-title" data-i18n="panel.risks">Inaccuracies &amp; Risks</span>
-            <span class="panel-badge badge-warn" data-i18n="panel.risksFound">3 found</span>
+            <span class="panel-badge badge-warn" id="issues-badge" data-i18n="panel.risksFound"></span>
           </div>
-          <div id="issues-panel-body">
-          <div class="issue-item">
-            <span class="issue-severity sev-high"></span>
-            <div>
-              <div class="issue-text">IP ownership contradiction between §2 and §5</div>
-              <div class="issue-loc">Section 2 vs Section 5</div>
-            </div>
-            <span class="issue-tag tag-inaccuracy">Inaccuracy</span>
-          </div>
-          <div class="issue-item">
-            <span class="issue-severity sev-high"></span>
-            <div>
-              <div class="issue-text">Payment amount not specified — contract unenforceable</div>
-              <div class="issue-loc">Section 1, Clause 3</div>
-            </div>
-            <span class="issue-tag tag-missing">Missing</span>
-          </div>
-          <div class="issue-item">
-            <span class="issue-severity sev-med"></span>
-            <div>
-              <div class="issue-text">Confidentiality period (2 yrs) below industry standard of 5 yrs</div>
-              <div class="issue-loc">Section 3</div>
-            </div>
-            <span class="issue-tag tag-risk">Risk</span>
-          </div>
-          </div>
+          <div id="issues-panel-body"></div>
         </div>
 
         <!-- Suggestions -->
@@ -183,22 +158,9 @@
           <div class="panel-header">
             <span class="panel-icon">✦</span>
             <span class="panel-title" data-i18n="panel.aiSuggestions">AI Suggestions</span>
-            <span class="panel-badge badge-info" data-i18n="panel.sugCount">3 suggestions</span>
+            <span class="panel-badge badge-info" id="suggestions-badge" data-i18n="panel.sugCount"></span>
           </div>
-          <div id="suggestions-panel-body">
-          <div class="suggestion-item">
-            <div class="sug-title"><span class="sug-icon">→</span> <span>Resolve IP ownership conflict</span><button class="apply-btn" onclick="applySuggestion(this)">Apply</button></div>
-            <div class="sug-body">Remove Section 2 ownership clause; retain license language. Section 5 client ownership should be the single source of truth.</div>
-          </div>
-          <div class="suggestion-item">
-            <div class="sug-title"><span class="sug-icon">→</span> <span>Add explicit payment amount</span><button class="apply-btn" onclick="applySuggestion(this)">Apply</button></div>
-            <div class="sug-body">Insert a defined fee schedule or refer to Exhibit B for pricing. Without this, the contract may be void for indefiniteness.</div>
-          </div>
-          <div class="suggestion-item">
-            <div class="sug-title"><span class="sug-icon">→</span> <span>Extend confidentiality to 5 years</span><button class="apply-btn" onclick="applySuggestion(this)">Apply</button></div>
-            <div class="sug-body">2-year NDA is below market standard. Recommend extending to 5 years to align with SaaS industry norms.</div>
-          </div>
-          </div>
+          <div id="suggestions-panel-body"></div>
         </div>
 
         <!-- AI Chat -->

@@ -232,118 +232,7 @@ async function restorePersistedData() {
   } catch(e) { console.warn('restoreSession failed', e); }
 }
 
-const DEMO_CONTRACTS = [
-  { name: "Vendor Agreement — Acme Corp",  issues: 3, status: "warn", date: "Apr 28" },
-  { name: "NDA — Horizon Partners",        issues: 0, status: "ok",   date: "Apr 21" },
-  { name: "Employment Contract — J. Lee",  issues: 5, status: "risk", date: "Apr 15" },
-  { name: "SaaS License — TechStack Inc",  issues: 0, status: "ok",   date: "Apr 10" },
-];
-
-function getDemoContractPayload(idx) {
-  const tr = currentLang === 'tr';
-
-  if (idx === 0) {
-    return {
-      text: tr
-        ? `TEDARİKÇİ HİZMET SÖZLEŞMESİ\n\n1. Hizmetler: Tedarikçi yazılım geliştirme hizmeti sunacaktır. Ödeme tutarı [BELİRTİLMEMİŞTİR].\n2. Fikri Mülkiyet: Tüm çıktılar Tedarikçiye aittir.\n3. Gizlilik: Taraflar gizliliği fesih sonrası 2 yıl korur.\n5. IP Devri: Tüm teslimatlar Müşteriye aittir.`
-        : `VENDOR SERVICES AGREEMENT\n\n1. Services: Vendor provides software development services. Payment amount is [NOT SPECIFIED].\n2. Intellectual Property: All deliverables are owned by Vendor.\n3. Confidentiality: Confidentiality survives for 2 years after termination.\n5. IP Assignment: All deliverables are owned by Client.`,
-      analysis: {
-        summary: tr
-          ? 'Satıcı hizmet sözleşmesinde ödeme, fikri mülkiyet ve gizlilik maddelerinde önemli riskler var.'
-          : 'Vendor services agreement contains material risks in payment, IP ownership, and confidentiality clauses.',
-        issues: tr ? [
-          { severity: 'high', text: 'IP sahipliği 2. ve 5. maddeler arasında çelişiyor.', location: 'Madde 2 vs Madde 5', tag: 'Contradiction' },
-          { severity: 'high', text: 'Ödeme tutarı belirtilmemiş; uygulanabilirlik riski oluşturuyor.', location: 'Madde 1', tag: 'Missing' },
-          { severity: 'medium', text: '2 yıllık gizlilik süresi sektör pratiğinin altında.', location: 'Madde 3', tag: 'Risk' },
-        ] : [
-          { severity: 'high', text: 'IP ownership conflicts between clauses 2 and 5.', location: 'Clause 2 vs Clause 5', tag: 'Contradiction' },
-          { severity: 'high', text: 'Payment amount is missing, creating enforceability risk.', location: 'Clause 1', tag: 'Missing' },
-          { severity: 'medium', text: '2-year confidentiality period is below market standard.', location: 'Clause 3', tag: 'Risk' },
-        ],
-        suggestions: tr ? [
-          { title: 'IP sahipliğini tek maddede netleştirin', body: '2. veya 5. maddeyi revize ederek tek bir sahiplik kuralı bırakın.' },
-          { title: 'Ödeme tutarı ve takvimi ekleyin', body: 'Sabit bedel veya ek-ücret tablosu ile ödeme koşullarını açıkça yazın.' },
-          { title: 'Gizlilik süresini uzatın', body: 'Süreyi en az 5 yıla çıkararak ticari sır korumasını güçlendirin.' },
-        ] : [
-          { title: 'Unify IP ownership clause', body: 'Revise clause 2 or 5 so only one ownership rule applies.' },
-          { title: 'Add payment amount and schedule', body: 'Define fixed fee or pricing exhibit with payment terms.' },
-          { title: 'Extend confidentiality term', body: 'Increase confidentiality survival to at least 5 years.' },
-        ],
-        initialMessage: tr
-          ? '**Satıcı sözleşmesi** yüklendi. 3 kritik alan var: IP çelişkisi, eksik ödeme tutarı ve düşük gizlilik süresi.'
-          : '**Vendor agreement** loaded. I found 3 key issues: IP conflict, missing payment amount, and short confidentiality period.',
-      }
-    };
-  }
-
-  if (idx === 1) {
-    return {
-      text: tr
-        ? `GİZLİLİK SÖZLEŞMESİ (NDA)\n\nTaraflar gizli bilgileri yalnızca proje amacıyla kullanır.\nGizlilik süresi 5 yıldır.\nYetki ve fesih hükümleri karşılıklıdır.`
-        : `NON-DISCLOSURE AGREEMENT (NDA)\n\nParties use confidential information only for project purposes.\nConfidentiality term is 5 years.\nJurisdiction and termination terms are mutual.`,
-      analysis: {
-        summary: tr ? 'NDA dengeli ve uygulanabilir görünüyor; kritik açık bulunmadı.' : 'NDA appears balanced and enforceable with no critical gaps.',
-        issues: [],
-        suggestions: [],
-        initialMessage: tr
-          ? '**NDA temiz görünüyor.** Kritik risk veya çelişki tespit edilmedi.'
-          : '**NDA looks clean.** No critical risks or contradictions detected.',
-      }
-    };
-  }
-
-  if (idx === 2) {
-    return {
-      text: tr
-        ? `İŞ SÖZLEŞMESİ\n\nDeneme süresi 9 ay olarak belirlenmiştir.\nFazla mesai ücreti düzenlenmemiştir.\nRekabet yasağı tüm dünyada 5 yıl süreyle geçerlidir.\nFesih bildirimi sadece işveren için 30 gündür.`
-        : `EMPLOYMENT AGREEMENT\n\nProbation period is set to 9 months.\nOvertime compensation is not defined.\nNon-compete applies worldwide for 5 years.\nTermination notice is 30 days for employer only.`,
-      analysis: {
-        summary: tr
-          ? 'İş sözleşmesi çalışan aleyhine ağır hükümler içeriyor ve birden fazla uyum riski barındırıyor.'
-          : 'Employment contract contains employee-unfriendly terms and multiple compliance risks.',
-        issues: tr ? [
-          { severity: 'high', text: 'Deneme süresi orantısız derecede uzun.', location: 'Madde 2', tag: 'Risk' },
-          { severity: 'high', text: 'Fazla mesai ücreti düzenlenmemiş.', location: 'Madde 4', tag: 'Missing' },
-          { severity: 'medium', text: 'Rekabet yasağı kapsamı aşırı geniş.', location: 'Madde 7', tag: 'Risk' },
-          { severity: 'medium', text: 'Fesih bildirim süresi tek taraflı yazılmış.', location: 'Madde 9', tag: 'Inaccuracy' },
-          { severity: 'low', text: 'Yıllık izin hesap yöntemi açık değil.', location: 'Madde 5', tag: 'Missing' },
-        ] : [
-          { severity: 'high', text: 'Probation period is disproportionately long.', location: 'Clause 2', tag: 'Risk' },
-          { severity: 'high', text: 'Overtime compensation is missing.', location: 'Clause 4', tag: 'Missing' },
-          { severity: 'medium', text: 'Non-compete scope is overly broad.', location: 'Clause 7', tag: 'Risk' },
-          { severity: 'medium', text: 'Termination notice is one-sided.', location: 'Clause 9', tag: 'Inaccuracy' },
-          { severity: 'low', text: 'Annual leave accrual method is unclear.', location: 'Clause 5', tag: 'Missing' },
-        ],
-        suggestions: tr ? [
-          { title: 'Deneme süresini yasal/makul seviyeye çekin', body: 'Deneme süresini 2–3 ay aralığında yeniden düzenleyin.' },
-          { title: 'Fazla mesai ücret kuralı ekleyin', body: 'Saatlik çarpan ve onay mekanizmasını açıkça tanımlayın.' },
-          { title: 'Rekabet yasağını daraltın', body: 'Süre, coğrafya ve faaliyet kapsamını ölçülü hale getirin.' },
-        ] : [
-          { title: 'Reduce probation period', body: 'Revise probation to a legally safer 2–3 month range.' },
-          { title: 'Add overtime compensation rule', body: 'Define overtime multiplier and approval workflow.' },
-          { title: 'Narrow non-compete clause', body: 'Limit duration, geography, and activity scope.' },
-        ],
-        initialMessage: tr
-          ? '**İş sözleşmesi** için 5 risk tespit ettim. Özellikle deneme süresi, fazla mesai ve rekabet yasağı maddeleri gözden geçirilmeli.'
-          : '**Employment contract** loaded with 5 risks. Probation, overtime, and non-compete terms need revision first.',
-      }
-    };
-  }
-
-  return {
-    text: tr
-      ? `SAAS LİSANS SÖZLEŞMESİ\n\nLisans kapsamı, destek seviyesi ve sorumluluk sınırları dengeli şekilde tanımlanmıştır.`
-      : `SAAS LICENSE AGREEMENT\n\nLicense scope, support level, and liability limits are defined in a balanced way.`,
-    analysis: {
-      summary: tr ? 'SaaS lisans metni dengeli görünüyor; kritik uyumsuzluk bulunmadı.' : 'SaaS license appears balanced with no critical inconsistencies.',
-      issues: [],
-      suggestions: [],
-      initialMessage: tr
-        ? '**SaaS lisansı temiz.** Kritik risk, eksik madde veya çelişki görünmüyor.'
-        : '**SaaS license looks clean.** No critical risk, missing clause, or contradiction found.',
-    }
-  };
-}
+// Demo contracts removed - no fake data
 
 // ===========================
 //  Analysis prompt (structured JSON output)
@@ -456,10 +345,10 @@ const TRANSLATIONS = {
     'viewer.collapse': 'Collapse',
     'section.analysis': 'Analysis Results',
     'panel.risks': 'Inaccuracies & Risks',
-    'panel.risksFound': '3 found',
+    'panel.risksFound': '',
     'panel.risksFoundDynamic': '{n} found',
     'panel.aiSuggestions': 'AI Suggestions',
-    'panel.sugCount': '3 suggestions',
+    'panel.sugCount': '',
     'panel.sugCountDynamic': '{n} suggestion{s}',
     'panel.chat': 'Ask about this contract',
     'panel.aiReady': 'AI Ready',
@@ -547,10 +436,10 @@ const TRANSLATIONS = {
     'viewer.collapse': 'Daralt',
     'section.analysis': 'Analiz Sonuçları',
     'panel.risks': 'Hatalar ve Riskler',
-    'panel.risksFound': '3 bulundu',
+    'panel.risksFound': '',
     'panel.risksFoundDynamic': '{n} bulundu',
     'panel.aiSuggestions': 'Yapay Zeka Önerileri',
-    'panel.sugCount': '3 öneri',
+    'panel.sugCount': '',
     'panel.sugCountDynamic': '{n} öneri',
     'panel.chat': 'Bu sözleşme hakkında soru sorun',
     'panel.aiReady': 'Yapay Zeka Hazır',
@@ -2121,15 +2010,32 @@ async function applyWithLLM(suggestion) {
     : currentContractText;
   try {
     const result = await ollamaChat(
-      `You are a contract editor. Apply exactly the one suggestion below to the contract text. Return ONLY the modified full contract text — no explanation, no markdown fences, no preamble. Preserve all other clauses exactly.`,
-      [{ role: 'user', content: `SUGGESTION: ${suggestion.title}\nDETAIL: ${suggestion.body}\n\nCONTRACT TEXT:\n${src}` }],
+      `You are a contract editor. Your task is to apply ONE specific suggestion to a contract.
+
+RULES — follow strictly:
+1. Return the COMPLETE contract text with ONLY the minimal change needed for the suggestion.
+2. Do NOT rephrase, rewrite, or paraphrase any other sentences.
+3. Do NOT add new sentences or words beyond what the suggestion requires.
+4. Do NOT change any clause that is unrelated to the suggestion.
+5. Preserve the original wording of every other sentence exactly, character-for-character.
+6. Return ONLY the contract text — no explanation, no markdown fences, no preamble.`,
+      [{ role: 'user', content: `SUGGESTION TO APPLY:\nTitle: ${suggestion.title}\nDetail: ${suggestion.body}\n\nCONTRACT TEXT (copy all of it, change only what is needed):\n${src}` }],
       2048,
       OLLAMA_CTX
     );
     const trimmed = (result || '').trim();
     if (trimmed.length < 30) return null;
     // Strip accidental fences
-    return trimmed.replace(/^```[^\n]*\n?/,'').replace(/\n?```$/,'').trim();
+    const cleaned = trimmed.replace(/^```[^\n]*\n?/,'').replace(/\n?```$/,'').trim();
+
+    // Sanity check: result must be at least 70% as long as the original
+    // to guard against the model truncating/hallucinating large sections.
+    const minLength = Math.floor(src.replace('\n[...]','').length * 0.70);
+    if (cleaned.length < minLength) {
+      console.warn('applyWithLLM: result too short (possible hallucination), falling back');
+      return null;
+    }
+    return cleaned;
   } catch (err) {
     console.warn('applyWithLLM failed:', err);
     return null;
@@ -2640,6 +2546,12 @@ function downloadEditedContract() {
     }).join('');
   }
 
+  // If the contract has been edited by LLM (no DOCX buffer), regenerate structured HTML
+  // from the modified text so headings/formatting are preserved in the Word export.
+  if (!currentContractDocxBuffer && html && !/^<h[1-6]|<strong|text-align/.test(html)) {
+    html = contractTextToStructuredHtml(text);
+  }
+
   const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_edited';
   downloadAsDocx(text, name, html);
 }
@@ -2910,9 +2822,67 @@ function updateSuggestionsCompare(forceVisible = false) {
   }
 }
 
+// Converts plain contract text → structured HTML preserving headings, sections, centering
+function contractTextToStructuredHtml(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const html = [];
+  let titleDone = false;
+
+  function escLine(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function inlineMd(s) {
+    // **bold** and *italic*
+    return s
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/_(.+?)_/g, '<em>$1</em>');
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+    if (!trimmed) { html.push(''); continue; }
+    const esc = escLine(trimmed);
+
+    // Calculate uppercase ratio (ignores digits/punctuation)
+    const letters = trimmed.replace(/[^a-zA-ZÇĞİÖŞÜçğışöü]/g, '');
+    const upperLetters = trimmed.replace(/[^A-ZÇĞİÖŞÜ]/g, '');
+    const upperRatio = letters.length ? upperLetters.length / letters.length : 0;
+    const isMostlyCaps = upperRatio >= 0.75 && /[A-ZÇĞİÖŞÜ]/.test(trimmed);
+
+    // First long all-caps line = document title (centered h1)
+    if (!titleDone && isMostlyCaps && trimmed.length > 10) {
+      titleDone = true;
+      html.push(`<h1 style="text-align:center">${esc}</h1>`);
+      continue;
+    }
+
+    // ALL-CAPS short line = section heading (h2)
+    if (isMostlyCaps && trimmed.length <= 120) {
+      html.push(`<h2>${esc}</h2>`);
+      continue;
+    }
+
+    // Numbered section: "1. Title" or "1.1 Title" (title-cased short line)
+    if (/^\d+(\.[\d]+)*[.)\s]\s+\S/.test(trimmed) && trimmed.length <= 120) {
+      html.push(`<h3>${inlineMd(esc)}</h3>`);
+      continue;
+    }
+
+    // Regular paragraph
+    html.push(`<p>${inlineMd(esc)}</p>`);
+  }
+  return html.join('');
+}
+
 function downloadSuggestedContract() {
   const text = currentContractText || '';
-  const html = currentContractHtml || '';
+  // If suggestions were applied, currentContractHtml is a flat formatAiMessage version.
+  // Regenerate structured HTML from the modified plain text for proper DOCX formatting.
+  const html = suggestionsAppliedSet.size > 0
+    ? contractTextToStructuredHtml(text)
+    : (currentContractHtml || '');
   const name = (currentContractName || 'contract').replace(/[^a-zA-Z0-9_-]/g, '_') + '_modified';
   downloadAsDocx(text, name, html);
 }
@@ -2949,6 +2919,28 @@ function htmlToDocxParas(htmlString) {
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // Parse inline style string into a map
+  function parseStyle(el) {
+    const map = {};
+    const style = el.style || {};
+    if (style.fontWeight === 'bold' || style.fontWeight >= 700) map.bold = true;
+    if (style.fontStyle === 'italic') map.italic = true;
+    if (style.textDecoration && style.textDecoration.includes('underline')) map.underline = true;
+    if (style.textDecoration && style.textDecoration.includes('line-through')) map.strikethrough = true;
+    if (style.textAlign) map.align = style.textAlign; // center, right, justify
+    return map;
+  }
+
+  // Get paragraph alignment OOXML string from an element
+  function getParaAlign(el) {
+    const styleMap = parseStyle(el);
+    const align = styleMap.align || el.getAttribute('align') || '';
+    if (align === 'center') return '<w:jc w:val="center"/>';
+    if (align === 'right')  return '<w:jc w:val="right"/>';
+    if (align === 'justify') return '<w:jc w:val="both"/>';
+    return '';
+  }
+
   function inlineRuns(node, opts) {
     opts = opts || {};
     let out = '';
@@ -2958,13 +2950,13 @@ function htmlToDocxParas(htmlString) {
         const txt = child.textContent;
         if (!txt) continue;
         let rPr = '';
-        if (opts.bold)         rPr += '<w:b/><w:bCs/>';
-        if (opts.italic)       rPr += '<w:i/><w:iCs/>';
-        if (opts.underline)    rPr += '<w:u w:val="single"/>';
-        if (opts.strikethrough || opts.deleted) rPr += '<w:strike/>';
-        const color = opts.deleted ? ' w:color="FF0000"' : opts.inserted ? ' w:color="00B050"' : '';
-        const colorRPr = color ? `<w:rPr><w:color${color}/></w:rPr>` : '';
-        out += `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : colorRPr}<w:t xml:space="preserve">${esc(txt)}</w:t></w:r>`;
+        if (opts.bold)                           rPr += '<w:b/><w:bCs/>';
+        if (opts.italic)                         rPr += '<w:i/><w:iCs/>';
+        if (opts.underline)                      rPr += '<w:u w:val="single"/>';
+        if (opts.strikethrough || opts.deleted)  rPr += '<w:strike/>';
+        if (opts.deleted)                        rPr += '<w:color w:val="FF0000"/>';
+        else if (opts.inserted)                  rPr += '<w:color w:val="00B050"/>';
+        out += `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${esc(txt)}</w:t></w:r>`;
       } else if (child.nodeType === 1) { // ELEMENT_NODE
         const t = child.tagName.toLowerCase();
         const next = Object.assign({}, opts);
@@ -2974,14 +2966,19 @@ function htmlToDocxParas(htmlString) {
         if (t === 'del') next.deleted = true;
         if (t === 'ins') next.inserted = true;
         if (t === 'br') { out += '<w:r><w:br/></w:r>'; continue; }
+        // Inherit style attributes
+        const sm = parseStyle(child);
+        if (sm.bold)          next.bold = true;
+        if (sm.italic)        next.italic = true;
+        if (sm.underline)     next.underline = true;
+        if (sm.strikethrough) next.strikethrough = true;
         out += inlineRuns(child, next);
       }
     }
     return out;
   }
 
-  // Detect if a <p> is effectively a heading:
-  // mammoth renders headings as <p><b>TEXT</b></p> or all-caps short text or "1. Section"
+  // Detect if a <p> is effectively a heading
   function isHeadingParagraph(el) {
     const text = el.textContent.trim();
     if (!text || text.length > 150) return false;
@@ -3009,17 +3006,19 @@ function htmlToDocxParas(htmlString) {
 
     if (/^h[1-6]$/.test(tag)) {
       const level = parseInt(tag[1], 10);
+      const jc = getParaAlign(el);
       const runs = inlineRuns(el, { bold: true });
       const styleId = level <= 2 ? 'Heading1' : level <= 4 ? 'Heading2' : 'Heading3';
-      paras.push(`<w:p><w:pPr><w:pStyle w:val="${styleId}"/><w:spacing w:before="240" w:after="80"/></w:pPr>${runs}</w:p>`);
+      paras.push(`<w:p><w:pPr><w:pStyle w:val="${styleId}"/><w:spacing w:before="240" w:after="80"/>${jc}</w:pPr>${runs}</w:p>`);
     } else if (tag === 'p') {
+      const jc = getParaAlign(el);
       if (isHeadingParagraph(el)) {
         const runs = inlineRuns(el, { bold: true });
-        paras.push(`<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:before="200" w:after="80"/></w:pPr>${runs}</w:p>`);
+        paras.push(`<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:before="200" w:after="80"/>${jc}</w:pPr>${runs}</w:p>`);
       } else {
         const runs = inlineRuns(el);
         paras.push(runs
-          ? `<w:p><w:pPr><w:spacing w:after="120"/></w:pPr>${runs}</w:p>`
+          ? `<w:p><w:pPr><w:spacing w:after="120"/>${jc}</w:pPr>${runs}</w:p>`
           : '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
       }
     } else if (tag === 'li') {
@@ -3034,13 +3033,20 @@ function htmlToDocxParas(htmlString) {
     } else if (tag === 'br') {
       paras.push('<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>');
     } else if (tag === 'table') {
+      // Build a proper OOXML table
+      let tblXml = '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>';
       el.querySelectorAll('tr').forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll('td, th')).map(td => td.textContent.trim()).filter(Boolean);
-        if (cells.length) {
-          const line = esc(cells.join('  │  '));
-          paras.push(`<w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:t xml:space="preserve">${line}</w:t></w:r></w:p>`);
-        }
+        tblXml += '<w:tr>';
+        tr.querySelectorAll('td, th').forEach(td => {
+          const isHeader = td.tagName.toLowerCase() === 'th';
+          const cellRuns = inlineRuns(td, { bold: isHeader });
+          tblXml += `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>` +
+            `<w:p><w:pPr><w:spacing w:after="80"/></w:pPr>${cellRuns}</w:p></w:tc>`;
+        });
+        tblXml += '</w:tr>';
       });
+      tblXml += '</w:tbl>';
+      paras.push(tblXml);
     } else {
       // span, strong, em, del, ins etc. at block level
       const runs = inlineRuns(el);
@@ -3158,6 +3164,17 @@ function buildDocxStyles() {
   '<w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>' +
   '<w:pPr><w:spacing w:before="200" w:after="60"/></w:pPr>' +
   '<w:rPr><w:b/><w:bCs/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr>' +
+  '</w:style>\n' +
+  '<w:style w:type="table" w:styleId="TableGrid">' +
+  '<w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/>' +
+  '<w:tblPr><w:tblBorders>' +
+  '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
+  '</w:tblBorders></w:tblPr>' +
   '</w:style>\n' +
   '</w:styles>';
 }
