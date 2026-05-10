@@ -249,6 +249,22 @@
           <div class="view-title" data-i18n="view.archive.title">Archive</div>
           <div class="view-subtitle" data-i18n="view.archive.subtitle">Archived contracts with full document viewer</div>
         </div>
+        <div class="archive-search-bar">
+          <div class="archive-search-input-wrap">
+            <span class="archive-search-icon">✦</span>
+            <input
+              id="archive-search-input"
+              class="archive-search-input"
+              type="text"
+              data-i18n-placeholder="view.archive.searchPlaceholder"
+              placeholder="Search contracts in your language…"
+              onkeydown="if(event.key==='Enter') performArchiveSearch()"
+            />
+            <div class="spinner archive-search-spinner" id="archive-search-spinner" style="display:none"></div>
+          </div>
+          <button class="btn-sm archive-search-btn" onclick="performArchiveSearch()" id="archive-search-btn" data-i18n="view.archive.searchBtn">✦ Ara</button>
+          <button class="btn-sm archive-search-clear" onclick="clearArchiveSearch()" id="archive-search-clear" style="display:none" data-i18n="view.archive.searchClear">✕ Temizle</button>
+        </div>
       </div>
       <div id="archive-empty" class="view-empty">
         <div class="view-empty-icon">⊟</div>

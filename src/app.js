@@ -404,6 +404,13 @@ const TRANSLATIONS = {
     'view.archive.groupThisMonth': 'This Month',
     'view.archive.groupLastMonth': 'Last Month',
     'view.archive.groupOlder': 'Older',
+    'view.archive.searchPlaceholder': 'Search contracts in your language… e.g. "contracts with penalty clauses"',
+    'view.archive.searchBtn': '✦ Search',
+    'view.archive.searchClear': '✕ Clear',
+    'view.archive.searchResultsTitle': 'Search Results',
+    'view.archive.searchNoResults': 'No matching contracts found for your query.',
+    'view.archive.searchRelevance': 'Relevance',
+    'view.archive.searchReason': 'Why matched',
     'view.suggestions.archive': '⊞ Archive',
     'view.suggestions.title': 'Recommendations',
     'view.suggestions.subtitle': 'Detailed AI recommendations for the current contract',
@@ -495,6 +502,13 @@ const TRANSLATIONS = {
     'view.archive.groupThisMonth': 'Bu Ay',
     'view.archive.groupLastMonth': 'Geçen Ay',
     'view.archive.groupOlder': 'Eski',
+    'view.archive.searchPlaceholder': 'Kendi dilinizde arayın… örn. "ceza maddesi olan sözleşmeler"',
+    'view.archive.searchBtn': '✦ Ara',
+    'view.archive.searchClear': '✕ Temizle',
+    'view.archive.searchResultsTitle': 'Arama Sonuçları',
+    'view.archive.searchNoResults': 'Sorgunuza uyan sözleşme bulunamadı.',
+    'view.archive.searchRelevance': 'Uygunluk',
+    'view.archive.searchReason': 'Eşleşme nedeni',
     'view.suggestions.archive': '⊞ Arşivle',
     'view.suggestions.title': 'Öneriler',
     'view.suggestions.subtitle': 'Mevcut sözleşme için ayrıntılı yapay zeka önerileri',
@@ -524,6 +538,7 @@ function setLang(lang) {
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
     el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
   });
+  refreshArchiveSearchUiTexts();
   const initialMsg = document.getElementById('initial-ai-msg');
   if (initialMsg) initialMsg.innerHTML = t('chat.initial');
   document.getElementById('lang-en').classList.toggle('active', lang === 'en');
@@ -531,6 +546,28 @@ function setLang(lang) {
   refreshDynamicLocalizedSections();
   updateContractViewerToggleLabel();
   updateThemeSwitchUI();
+}
+
+function refreshArchiveSearchUiTexts() {
+  const fallback = {
+    placeholder: currentLang === 'tr'
+      ? 'Kendi dilinizde arayın… örn. "ceza maddesi olan sözleşmeler"'
+      : 'Search contracts in your language… e.g. "contracts with penalty clauses"',
+    btn: currentLang === 'tr' ? '✦ Ara' : '✦ Search',
+    clear: currentLang === 'tr' ? '✕ Temizle' : '✕ Clear',
+  };
+
+  const input = document.getElementById('archive-search-input');
+  const btn = document.getElementById('archive-search-btn');
+  const clearBtn = document.getElementById('archive-search-clear');
+
+  const ph = t('view.archive.searchPlaceholder');
+  const bt = t('view.archive.searchBtn');
+  const cl = t('view.archive.searchClear');
+
+  if (input) input.placeholder = ph.startsWith('view.archive.') ? fallback.placeholder : ph;
+  if (btn) btn.textContent = bt.startsWith('view.archive.') ? fallback.btn : bt;
+  if (clearBtn) clearBtn.textContent = cl.startsWith('view.archive.') ? fallback.clear : cl;
 }
 
 function pluralSuffix(n) {
@@ -2634,6 +2671,89 @@ function downloadEditedContract() {
 //  Archive View
 // ===========================
 
+// Search state
+let archiveSearchResults = null; // null = no search active; array = LLM search results
+
+async function performArchiveSearch() {
+  const input = document.getElementById('archive-search-input');
+  const query = (input?.value || '').trim();
+  if (!query) return;
+  if (archivedContracts.length === 0) return;
+
+  const spinner = document.getElementById('archive-search-spinner');
+  const btn = document.getElementById('archive-search-btn');
+  const clearBtn = document.getElementById('archive-search-clear');
+
+  if (spinner) spinner.style.display = '';
+  if (btn) { btn.disabled = true; }
+
+  try {
+    // Build compact summaries for all archived contracts
+    const summaries = archivedContracts.map((entry, idx) => {
+      const snippet = (entry.text || '').slice(0, 400).replace(/\s+/g, ' ').trim();
+      const issues = entry.analysis?.issues?.map(i => i.text).slice(0, 3).join('; ') || '';
+      const suggestions = entry.analysis?.suggestions?.map(s => s.summary || s.text || '').slice(0, 2).join('; ') || '';
+      return `[${idx}] Name: "${entry.name}"\nSnippet: ${snippet}\nIssues: ${issues}\nSuggestions: ${suggestions}`;
+    }).join('\n\n---\n\n');
+
+    const systemPrompt = `You are a contract search assistant. The user will give you a natural language search query and a list of contracts (each with an index, name, text snippet, and issue/suggestion info). 
+Your job is to identify which contracts are relevant to the user's query and rank them by relevance.
+Respond ONLY with a valid JSON array — no prose, no markdown fences. Each element must have:
+  - "idx": the contract index (integer)
+  - "score": relevance score 0-10 (integer, 10 = highly relevant)
+  - "reason": a one-sentence explanation of why this contract matches (in the same language as the user's query)
+Include only contracts with score >= 4. Sort descending by score.
+Example: [{"idx":2,"score":9,"reason":"Contains a penalty clause in section 5."},{"idx":0,"score":6,"reason":"Has termination terms that may be relevant."}]`;
+
+    const userMsg = `Search query: "${query}"\n\nContracts:\n${summaries}`;
+
+    const raw = await ollamaChat(systemPrompt, [{ role: 'user', content: userMsg }], 512, OLLAMA_CTX);
+    
+    // Parse the JSON response
+    let results = [];
+    try {
+      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const arrStart = stripped.indexOf('[');
+      const arrEnd = stripped.lastIndexOf(']');
+      if (arrStart !== -1 && arrEnd !== -1) {
+        results = JSON.parse(stripped.slice(arrStart, arrEnd + 1));
+      }
+    } catch (e) {
+      console.warn('Archive search JSON parse failed:', e, raw);
+      results = [];
+    }
+
+    archiveSearchResults = results.filter(r => typeof r.idx === 'number' && r.idx >= 0 && r.idx < archivedContracts.length);
+    if (clearBtn) clearBtn.style.display = '';
+    refreshArchiveView();
+  } catch (err) {
+    console.error('Archive LLM search failed:', err);
+    // Fallback: simple substring match
+    const q = query.toLowerCase();
+    archiveSearchResults = archivedContracts
+      .map((entry, idx) => {
+        const haystack = (entry.name + ' ' + entry.text).toLowerCase();
+        const score = haystack.includes(q) ? 7 : 0;
+        return score > 0 ? { idx, score, reason: 'Text match found.' } : null;
+      })
+      .filter(Boolean);
+    if (clearBtn) clearBtn.style.display = '';
+    refreshArchiveView();
+  } finally {
+    if (spinner) spinner.style.display = 'none';
+    if (btn) btn.disabled = false;
+  }
+}
+
+function clearArchiveSearch() {
+  archiveSearchResults = null;
+  const input = document.getElementById('archive-search-input');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('archive-search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  refreshArchiveView();
+}
+
 function refreshArchiveView() {
   const empty = document.getElementById('archive-empty');
   const content = document.getElementById('archive-content');
@@ -2648,6 +2768,48 @@ function refreshArchiveView() {
   const list = document.getElementById('archive-list');
   if (!list) return;
 
+  // ---- SEARCH RESULTS MODE ----
+  if (archiveSearchResults !== null) {
+    if (archiveSearchResults.length === 0) {
+      list.innerHTML = `<div class="archive-search-empty">
+        <div class="archive-search-empty-icon">✦</div>
+        <div>${escapeHtml(t('view.archive.searchNoResults'))}</div>
+      </div>`;
+      return;
+    }
+    list.innerHTML = `<div class="archive-group">
+      <div class="archive-group-label">${escapeHtml(t('view.archive.searchResultsTitle'))} — ${archiveSearchResults.length} ${archiveSearchResults.length === 1 ? 'result' : 'results'}</div>
+      ${archiveSearchResults.map(({ idx, score, reason }) => {
+        const entry = archivedContracts[idx];
+        if (!entry) return '';
+        const d = entry.archivedAt instanceof Date ? entry.archivedAt : new Date(entry.archivedAt);
+        const fullDateStr = d.toLocaleString(currentLocale(), { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const issueCount = entry.analysis?.issues?.length || 0;
+        const status = issueCount === 0 ? 'ok' : issueCount <= 3 ? 'warn' : 'risk';
+        const scoreBarWidth = Math.round((score / 10) * 100);
+        return `
+        <div class="archive-row ${activeArchivedIndex === idx ? 'active' : ''}" onclick="openArchivedContract(${idx})">
+          <span class="status-dot status-${status}" style="flex-shrink:0;margin-top:2px"></span>
+          <div class="archive-row-info">
+            <div class="archive-row-name">${escapeHtml(entry.name)}</div>
+            <div class="archive-row-meta">
+              <span class="archive-row-date">🗓 ${escapeHtml(fullDateStr)}</span>
+              <span class="archive-row-dot">·</span>
+              ${issueCount === 0 ? t('meta.cleanDynamic') : t('meta.issuesDynamic').replace('{n}', issueCount).replace('{s}', pluralSuffix(issueCount))}
+            </div>
+            ${reason ? `<div class="archive-search-reason">
+              <div class="archive-search-reason-bar-wrap"><div class="archive-search-reason-bar" style="width:${scoreBarWidth}%"></div></div>
+              <span class="archive-search-reason-text">✦ ${escapeHtml(reason)}</span>
+            </div>` : ''}
+          </div>
+          <button class="btn-sm" onclick="event.stopPropagation(); downloadArchivedContractByIdx(${idx})" style="margin-left:auto;flex-shrink:0">↓</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+    return;
+  }
+
+  // ---- NORMAL (GROUPED) MODE ----
   const now = new Date();
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -3483,6 +3645,7 @@ function removeContract() {
   if (!contextMenuTarget) return;
   const contractId = contextMenuTarget.dataset.contractId;
   if (!contractId) return;
+  const wasActive = contextMenuTarget.classList.contains('active');
 
   // Remove from DOM
   contextMenuTarget.remove();
@@ -3493,8 +3656,73 @@ function removeContract() {
   // Save state
   saveSidebar();
 
+  if (wasActive) {
+    clearCurrentContractScreen();
+  }
+
   // Close context menu
   hideContractContextMenu();
+}
+
+function clearCurrentContractScreen() {
+  currentContractName = '';
+  currentContractText = '';
+  currentContractHtml = '';
+  currentContractDocxBuffer = null;
+  currentAnalysis = null;
+  chatHistory = [];
+  originalDocHtml = null;
+  originalContractText = null;
+  compareModeActive = false;
+  suggestionsAppliedSet = new Set();
+
+  // Clear persisted active session
+  idbDelete('session', 'current').catch(() => {});
+
+  // Show upload zone again
+  const mainArea = document.getElementById('main-area');
+  if (mainArea) mainArea.classList.remove('has-contract');
+  const uploadZone = document.getElementById('upload-zone');
+  if (uploadZone) uploadZone.style.display = '';
+
+  // Reset contract title + document
+  const titleEl = document.querySelector('[data-i18n="section.contract"]');
+  if (titleEl) titleEl.textContent = t('section.contract');
+  const docEl = document.getElementById('contract-doc');
+  if (docEl) {
+    docEl.classList.remove('is-docx', 'is-rich-doc');
+    docEl.innerHTML = `<div class="panel-empty">${escapeHtml(t('upload.title'))}</div>`;
+  }
+
+  // Reset dashboard issue/suggestion sections
+  const issuesBadge = document.querySelector('[data-i18n="panel.risksFound"]');
+  if (issuesBadge) issuesBadge.textContent = formatDynamicRisksFound(0);
+  const issuesBody = document.getElementById('issues-panel-body');
+  if (issuesBody) issuesBody.innerHTML = `<div class="panel-empty">${escapeHtml(t('issues.none'))}</div>`;
+
+  const sugBadge = document.querySelector('[data-i18n="panel.sugCount"]');
+  if (sugBadge) sugBadge.textContent = formatDynamicSuggestionCount(0);
+  const sugBody = document.getElementById('suggestions-panel-body');
+  if (sugBody) sugBody.innerHTML = `<div class="panel-empty">${escapeHtml(t('suggestions.none'))}</div>`;
+
+  // Reset chat panel
+  const chatMessages = document.getElementById('chat-messages');
+  if (chatMessages) {
+    chatMessages.innerHTML = `
+      <div class="msg">
+        <div class="msg-avatar msg-ai">${escapeHtml(t('msg.avatar.ai'))}</div>
+        <div class="msg-text" id="initial-ai-msg">${escapeHtml(t('chat.initial'))}</div>
+      </div>
+    `;
+  }
+
+  // Close viewer modal if open
+  if (contractViewerExpanded) closeContractViewerModal();
+
+  updateAnalyzeNavBadge();
+  updateSuggestionsNavBadge();
+  refreshAnalyzeView();
+  refreshSuggestionsView();
 }
 
 // Reliable delegated right-click handler for all current/future contract items
