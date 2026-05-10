@@ -376,6 +376,8 @@ const TRANSLATIONS = {
     'msg.fileError': 'Could not read this file. For best results use a .txt file.',
     'msg.reading': 'Reading "{name}"…',
     'msg.analyzed': 'Analysis complete for "{name}". Found {n} issue{s}. Panels updated.',
+    'msg.archiveSuccess': '"{name}" archived successfully.',
+    'msg.archiveAlready': '"{name}" is already archived.',
     'apply.btn': 'Apply',
     'apply.done': '✓ Applied',
     'issues.none': '✓ No issues found',
@@ -389,6 +391,7 @@ const TRANSLATIONS = {
     'view.analyze.subtitle': 'Load a contract to see detailed issues',
     'view.analyze.archive': 'Archive Contract',
     'view.analyze.archived': 'Archived!',
+    'view.analyze.alreadyArchived': 'Already archived',
     'view.analyze.download': '↓ Download',
     'view.analyze.editDoc': 'Edit Document',
     'view.analyze.editable': 'Editable',
@@ -474,6 +477,8 @@ const TRANSLATIONS = {
     'msg.fileError': 'Dosya okunamadı. En iyi sonuç için .txt dosyası deneyin.',
     'msg.reading': '"{name}" okunuyor…',
     'msg.analyzed': '"{name}" analizi tamamlandı. {n} sorun bulundu{s}. Paneller güncellendi.',
+    'msg.archiveSuccess': '"{name}" başarıyla arşivlendi.',
+    'msg.archiveAlready': '"{name}" zaten arşivde.',
     'apply.btn': 'Uygula',
     'apply.done': '✓ Uygulandı',
     'issues.none': '✓ Sorun bulunamadı',
@@ -487,6 +492,7 @@ const TRANSLATIONS = {
     'view.analyze.subtitle': 'Ayrıntılı sorunları görmek için bir sözleşme yükleyin',
     'view.analyze.archive': 'Arşivle',
     'view.analyze.archived': 'Arşivlendi!',
+    'view.analyze.alreadyArchived': 'Zaten arşivli',
     'view.analyze.download': '↓ İndir',
     'view.analyze.editDoc': 'Belgeyi Düzenle',
     'view.analyze.editable': 'Düzenlenebilir',
@@ -2499,8 +2505,52 @@ function setView(view, el) {
 let archivedContracts = [];
 let activeArchivedIndex = -1;
 
+function normalizeArchiveComparableText(s) {
+  return String(s || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function findExistingArchiveIndex(name, text, html) {
+  const normalizedName = normalizeArchiveComparableText(name);
+  const normalizedText = normalizeArchiveComparableText(text);
+  const normalizedHtml = normalizeArchiveComparableText(html);
+
+  return archivedContracts.findIndex((e) => {
+    const sameName = normalizeArchiveComparableText(e.name) === normalizedName;
+    if (!sameName) return false;
+
+    const sameText = normalizedText && normalizeArchiveComparableText(e.text) === normalizedText;
+    const sameHtml = normalizedHtml && normalizeArchiveComparableText(e.html) === normalizedHtml;
+    return !!(sameText || sameHtml);
+  });
+}
+
+function flashArchiveButtons(label) {
+  ['btn-archive-contract', 'btn-archive-from-suggestions'].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = label;
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.disabled = false;
+    }, 1800);
+  });
+}
+
 function archiveCurrentContract() {
   if (!currentContractName) return;
+
+  const existingIdx = findExistingArchiveIndex(currentContractName, currentContractText || '', currentContractHtml || '');
+  if (existingIdx >= 0) {
+    flashArchiveButtons('⚠ ' + t('view.analyze.alreadyArchived'));
+    addMessage('ai', t('msg.archiveAlready').replace('{name}', currentContractName));
+    return;
+  }
+
   const entry = {
     id: `arc-${Date.now()}`,
     name: currentContractName,
@@ -2515,14 +2565,8 @@ function archiveCurrentContract() {
   saveState();
   saveArchive();
   updateStatCards();
-  // Give feedback
-  const btn = document.getElementById('btn-archive-contract');
-  if (btn) {
-    const orig = btn.textContent;
-    btn.textContent = '✓ ' + t('view.analyze.archived');
-    btn.disabled = true;
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
-  }
+  flashArchiveButtons('✓ ' + t('view.analyze.archived'));
+  addMessage('ai', t('msg.archiveSuccess').replace('{name}', currentContractName));
 }
 
 // ===========================
