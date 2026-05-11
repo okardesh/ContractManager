@@ -592,7 +592,10 @@ body.theme-dark ins.tc-ins { background: rgba(16,185,129,0.2); color: #34d399; t
 .contract-doc.is-rich-doc .word-doc-body > p:has(> b:only-child):first-child,
 .contract-viewer .contract-doc .word-doc-body > p:has(> strong:only-child):first-child,
 .contract-modal .contract-doc .word-doc-body > p:has(> strong:only-child):first-child,
-.doc-editor-rich .word-doc-body > p:has(> strong:only-child):first-child {
+.doc-editor-rich .word-doc-body > p:has(> strong:only-child):first-child,
+.compare-col .contract-doc .word-doc-body > p:has(> strong:only-child):first-child,
+.compare-col .contract-doc .word-doc-body > p:has(> b:only-child):first-child,
+.sug-split-col .contract-doc .word-doc-body > p:has(> strong:only-child):first-child {
   font-size: 26px;
   line-height: 1.05;
   text-align: center;
