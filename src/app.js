@@ -2614,16 +2614,25 @@ function flashArchiveButtons(label) {
 function archiveCurrentContract() {
   if (!currentContractName) return;
 
-  const existingIdx = findExistingArchiveIndex(currentContractName, currentContractText || '', currentContractHtml || '');
-  if (existingIdx >= 0) {
+  // Check for exact duplicate (same name + same content) — block silently
+  const exactDupIdx = findExistingArchiveIndex(currentContractName, currentContractText || '', currentContractHtml || '');
+  if (exactDupIdx >= 0) {
     flashArchiveButtons('⚠ ' + t('view.analyze.alreadyArchived'));
     addMessage('ai', t('msg.archiveAlready').replace('{name}', currentContractName));
     return;
   }
 
+  // Count existing versions for this contract name to assign next version number
+  const normalizedName = normalizeArchiveComparableText(currentContractName);
+  const existingVersions = archivedContracts.filter(
+    e => normalizeArchiveComparableText(e.name) === normalizedName
+  );
+  const version = existingVersions.length + 1;
+
   const entry = {
     id: `arc-${Date.now()}`,
     name: currentContractName,
+    version,
     text: currentContractText || '',
     html: currentContractHtml || '',
     docxBuffer: currentContractDocxBuffer ? currentContractDocxBuffer.slice(0) : null,
@@ -2635,8 +2644,9 @@ function archiveCurrentContract() {
   saveState();
   saveArchive();
   updateStatCards();
-  flashArchiveButtons('✓ ' + t('view.analyze.archived'));
-  addMessage('ai', t('msg.archiveSuccess').replace('{name}', currentContractName));
+  const vLabel = version > 1 ? ` (v${version})` : '';
+  flashArchiveButtons('✓ ' + t('view.analyze.archived') + vLabel);
+  addMessage('ai', t('msg.archiveSuccess').replace('{name}', currentContractName) + vLabel);
 }
 
 // ===========================
@@ -2935,45 +2945,80 @@ function refreshArchiveView() {
     return;
   }
 
-  // ---- NORMAL (GROUPED) MODE ----
+  // ---- NORMAL (GROUPED BY CONTRACT NAME) MODE ----
+  // Group all versions by normalised contract name; show one row per contract
+  // with the latest version on top. If multiple versions exist, show a badge
+  // and an inline version picker when the row is expanded.
   const now = new Date();
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
-  const groups = [
-    { key: 'thisMonth',  label: t('view.archive.groupThisMonth'), entries: [] },
-    { key: 'lastMonth',  label: t('view.archive.groupLastMonth'), entries: [] },
-    { key: 'older',      label: t('view.archive.groupOlder'),     entries: [] },
-  ];
-
+  // Build a map: normalisedName → [{entry, idx}, …] sorted newest-first
+  const contractMap = new Map();
   archivedContracts.forEach((entry, idx) => {
-    const d = entry.archivedAt instanceof Date ? entry.archivedAt : new Date(entry.archivedAt);
-    if (d >= thisMonthStart)      groups[0].entries.push({ entry, idx });
-    else if (d >= lastMonthStart) groups[1].entries.push({ entry, idx });
-    else                          groups[2].entries.push({ entry, idx });
+    const key = normalizeArchiveComparableText(entry.name);
+    if (!contractMap.has(key)) contractMap.set(key, []);
+    contractMap.get(key).push({ entry, idx });
   });
 
-  list.innerHTML = groups
-    .filter(g => g.entries.length > 0)
+  // Assign time-group based on the LATEST version's date
+  const timeGroups = [
+    { key: 'thisMonth',  label: t('view.archive.groupThisMonth'), contracts: [] },
+    { key: 'lastMonth',  label: t('view.archive.groupLastMonth'), contracts: [] },
+    { key: 'older',      label: t('view.archive.groupOlder'),     contracts: [] },
+  ];
+
+  contractMap.forEach((versions) => {
+    // versions already sorted newest-first (archivedContracts is sorted newest-first)
+    const latest = versions[0];
+    const d = latest.entry.archivedAt instanceof Date ? latest.entry.archivedAt : new Date(latest.entry.archivedAt);
+    if (d >= thisMonthStart)      timeGroups[0].contracts.push(versions);
+    else if (d >= lastMonthStart) timeGroups[1].contracts.push(versions);
+    else                          timeGroups[2].contracts.push(versions);
+  });
+
+  list.innerHTML = timeGroups
+    .filter(g => g.contracts.length > 0)
     .map(g => {
-      const rows = g.entries.map(({ entry, idx }) => {
-        const d = entry.archivedAt instanceof Date ? entry.archivedAt : new Date(entry.archivedAt);
-        const dateStr = d.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const rows = g.contracts.map((versions) => {
+        const latest = versions[0];
+        const { entry: le, idx: latestIdx } = latest;
+        const d = le.archivedAt instanceof Date ? le.archivedAt : new Date(le.archivedAt);
         const fullDateStr = d.toLocaleString(currentLocale(), { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const issueCount = entry.analysis?.issues?.length || 0;
+        const issueCount = le.analysis?.issues?.length || 0;
         const status = issueCount === 0 ? 'ok' : issueCount <= 3 ? 'warn' : 'risk';
+        const isActive = versions.some(v => v.idx === activeArchivedIndex);
+        const totalVersions = versions.length;
+        const versionBadge = totalVersions > 1
+          ? `<span class="archive-version-badge" onclick="event.stopPropagation(); toggleArchiveVersions('${escapeHtml(normalizeArchiveComparableText(le.name))}')" title="${totalVersions} versions">${totalVersions} versions ▾</span>`
+          : '';
+        // Version picker (hidden by default)
+        const versionPicker = totalVersions > 1 ? `
+          <div class="archive-version-picker" id="avp-${escapeHtml(normalizeArchiveComparableText(le.name))}" style="display:none">
+            ${versions.map(({ entry: ve, idx: vi }) => {
+              const vd = ve.archivedAt instanceof Date ? ve.archivedAt : new Date(ve.archivedAt);
+              const vDate = vd.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+              const vNum = ve.version || 1;
+              return `<div class="archive-version-item ${activeArchivedIndex === vi ? 'active' : ''}" onclick="event.stopPropagation(); openArchivedContract(${vi})">
+                <span class="archive-version-num">v${vNum}</span>
+                <span class="archive-version-date">${escapeHtml(vDate)}</span>
+                <button class="btn-sm" onclick="event.stopPropagation(); downloadArchivedContractByIdx(${vi})">↓</button>
+              </div>`;
+            }).join('')}
+          </div>` : '';
         return `
-        <div class="archive-row ${activeArchivedIndex === idx ? 'active' : ''}" onclick="openArchivedContract(${idx})">
+        <div class="archive-row ${isActive ? 'active' : ''}" onclick="openArchivedContract(${latestIdx})">
           <span class="status-dot status-${status}" style="flex-shrink:0;margin-top:2px"></span>
           <div class="archive-row-info">
-            <div class="archive-row-name">${escapeHtml(entry.name)}</div>
+            <div class="archive-row-name">${escapeHtml(le.name)} ${versionBadge}</div>
             <div class="archive-row-meta">
               <span class="archive-row-date">🗓 ${escapeHtml(fullDateStr)}</span>
               <span class="archive-row-dot">·</span>
               ${issueCount === 0 ? t('meta.cleanDynamic') : t('meta.issuesDynamic').replace('{n}', issueCount).replace('{s}', pluralSuffix(issueCount))}
             </div>
+            ${versionPicker}
           </div>
-          <button class="btn-sm" onclick="event.stopPropagation(); downloadArchivedContractByIdx(${idx})" style="margin-left:auto;flex-shrink:0" data-i18n="view.archive.download">↓</button>
+          <button class="btn-sm" onclick="event.stopPropagation(); downloadArchivedContractByIdx(${latestIdx})" style="margin-left:auto;flex-shrink:0" data-i18n="view.archive.download">↓</button>
         </div>`;
       }).join('');
       return `<div class="archive-group">
@@ -3028,6 +3073,12 @@ function openArchivedContract(idx) {
     }
   }
   viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function toggleArchiveVersions(normalisedKey) {
+  const picker = document.getElementById(`avp-${normalisedKey}`);
+  if (!picker) return;
+  picker.style.display = picker.style.display === 'none' ? '' : 'none';
 }
 
 function closeArchiveViewer() {

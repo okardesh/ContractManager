@@ -1348,6 +1348,54 @@ body.theme-dark .tag-risk       { background: #4a044e; color: #f5d0fe; }
 .archive-row-meta { font-size: 11.5px; color: var(--text-tertiary); margin-top: 2px; }
 .archive-viewer { padding: 0 24px 24px; }
 
+/* Version badge & picker */
+.archive-version-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: #ede9fe;
+  color: #5b21b6;
+  cursor: pointer;
+  vertical-align: middle;
+  margin-left: 6px;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+.archive-version-badge:hover { background: #ddd6fe; }
+.archive-version-picker {
+  margin-top: 6px;
+  border: 0.5px solid var(--border-mid);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+.archive-version-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--border-light);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+.archive-version-item:last-child { border-bottom: none; }
+.archive-version-item:hover { background: var(--bg-tertiary); }
+.archive-version-item.active { color: var(--accent); background: #eef2ff; }
+.archive-version-num {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 24px;
+  color: var(--accent);
+}
+.archive-version-date { flex: 1; }
+
 /* ===========================
    Suggestions view
    =========================== */
