@@ -2103,6 +2103,43 @@ function replaceFirstRegexInTextNodes(root, pattern, replacement) {
   return false;
 }
 
+function escapeRegExp(str) {
+  return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function tryApplyMinimalDomEdits(rootEl, oldText, newText) {
+  try {
+    if (!rootEl || !oldText || !newText) return false;
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+    const ops = lcsDiff(oldLines, newLines);
+    let i = 0;
+    let appliedAny = false;
+    while (i < ops.length) {
+      const op = ops[i];
+      if (op.type === 'equal') { i++; continue; }
+      const delLines = [];
+      const insLines = [];
+      while (i < ops.length && ops[i].type === 'delete') { delLines.push(ops[i].value); i++; }
+      while (i < ops.length && ops[i].type === 'insert') { insLines.push(ops[i].value); i++; }
+
+      if (delLines.length > 0) {
+        const delBlock = delLines.join('\n').trim();
+        const insBlock = insLines.join('\n').trim();
+        if (!delBlock) continue;
+        const pattern = new RegExp(escapeRegExp(delBlock), 'i');
+        // Try direct replacement in text nodes
+        const replaced = replaceFirstRegexInTextNodes(rootEl, pattern, insBlock);
+        if (replaced) appliedAny = true;
+      }
+    }
+    return appliedAny;
+  } catch (err) {
+    console.warn('tryApplyMinimalDomEdits error', err);
+    return false;
+  }
+}
+
 // Use LLM to apply a suggestion to the current contract text.
 // Returns the modified text, or null on failure.
 async function applyWithLLM(suggestion) {
@@ -2161,30 +2198,49 @@ async function applyDocumentEdit(suggestion) {
   const modified = await applyWithLLM(suggestion);
 
   if (modified && modified.trim() !== (currentContractText || '').trim()) {
-    // ── LLM succeeded: update global text, re-render all doc panels ──
+    // ── LLM succeeded: try to apply minimal DOM-preserving edits first
+    const appliedMinimal = tryApplyMinimalDomEdits(docEl, originalContractText || '', modified);
     currentContractText = modified;
-    currentContractHtml = formatAiMessage(modified);
     currentContractDocxBuffer = null; // avoid showing stale original DOCX after edits
 
-    // Dashboard contract-doc
-    docEl.classList.remove('is-docx');
-    docEl.classList.add('is-rich-doc');
-    docEl.innerHTML = `
-      <div class="doc-title">${escapeHtml((currentContractName || '').toUpperCase())}</div>
-      <div class="word-doc-body">${currentContractHtml}</div>
-    `;
-    syncContractViewerModal();
+    if (appliedMinimal) {
+      // Pull updated HTML from the live doc element so formatting is preserved
+      const body = docEl.querySelector('.word-doc-body');
+      currentContractHtml = body ? body.innerHTML : docEl.innerHTML;
+      // Ensure analyze rich editor shows updated HTML
+      const rich = document.getElementById('analyze-doc-rich');
+      if (rich) { rich.style.display = ''; rich.innerHTML = buildEditableRichHtml(); rich._userEdited = false; }
+      const canvas = document.getElementById('analyze-doc-canvas');
+      if (canvas) { canvas._rendered = false; canvas.style.display = 'none'; }
+      const editor = document.getElementById('analyze-doc-editor');
+      if (editor) { editor.style.display = 'none'; editor.value = modified; editor._userEdited = false; }
+      const modeBadge = document.getElementById('analyze-doc-mode-badge');
+      if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
+      syncContractViewerModal();
+      saveSession();
+    } else {
+      // Fallback: render flat formatted AI text (legacy behavior)
+      currentContractHtml = formatAiMessage(modified);
+      // Dashboard contract-doc
+      docEl.classList.remove('is-docx');
+      docEl.classList.add('is-rich-doc');
+      docEl.innerHTML = `
+        <div class="doc-title">${escapeHtml((currentContractName || '').toUpperCase())}</div>
+        <div class="word-doc-body">${currentContractHtml}</div>
+      `;
+      syncContractViewerModal();
 
-    // Analyze view: invalidate DOCX canvas, keep editable rich view
-    const canvas   = document.getElementById('analyze-doc-canvas');
-    const rich     = document.getElementById('analyze-doc-rich');
-    const editor   = document.getElementById('analyze-doc-editor');
-    const modeBadge = document.getElementById('analyze-doc-mode-badge');
-    if (canvas)   { canvas._rendered = false; canvas.style.display = 'none'; }
-    if (rich)     { rich.style.display = ''; rich.innerHTML = buildEditableRichHtml(); rich._userEdited = false; }
-    if (editor)   { editor.style.display = 'none'; editor.value = modified; editor._userEdited = false; }
-    if (modeBadge) { modeBadge.textContent = t('view.analyze.editable'); modeBadge.className = 'panel-badge badge-info'; }
-    saveSession();
+      // Analyze view: invalidate DOCX canvas, keep editable rich view
+      const canvas2   = document.getElementById('analyze-doc-canvas');
+      const rich2     = document.getElementById('analyze-doc-rich');
+      const editor2   = document.getElementById('analyze-doc-editor');
+      const modeBadge2 = document.getElementById('analyze-doc-mode-badge');
+      if (canvas2)   { canvas2._rendered = false; canvas2.style.display = 'none'; }
+      if (rich2)     { rich2.style.display = ''; rich2.innerHTML = buildEditableRichHtml(); rich2._userEdited = false; }
+      if (editor2)   { editor2.style.display = 'none'; editor2.value = modified; editor2._userEdited = false; }
+      if (modeBadge2) { modeBadge2.textContent = t('view.analyze.editable'); modeBadge2.className = 'panel-badge badge-info'; }
+      saveSession();
+    }
   } else {
     // ── Fallback: narrow regex replacements + prepend annotation ──
     const combined = `${suggestion?.title || ''} ${suggestion?.body || ''}`.toLowerCase();
@@ -2250,8 +2306,22 @@ function renderAnalysis(filename, analysis, options = {}) {
       issuesBody.innerHTML = `<div class="panel-empty">${t('issues.none')}</div>`;
     } else {
       const tagClass = { Inaccuracy: 'tag-inaccuracy', Missing: 'tag-missing', Contradiction: 'tag-inaccuracy', Risk: 'tag-risk' };
-      issuesBody.innerHTML = analysis.issues.map((issue, idx) => `
-        <div class="issue-item" onclick="focusIssue(${idx})">
+      // Map a variety of severity labels (including localized) to rank values
+      const sevRankMap = { high: 3, medium: 2, low: 1, 'yüksek': 3, 'yuksek': 3, 'orta': 2, 'düşük': 1, 'dusuk': 1 };
+      function sevVal(s) {
+        const k = String(s || '').toLowerCase().trim();
+        if (!k) return 0;
+        if (sevRankMap[k] !== undefined) return sevRankMap[k];
+        if (k.includes('yüksek') || k.includes('yuksek') || k.includes('high')) return 3;
+        if (k.includes('orta') || k.includes('medium') || k.includes('med')) return 2;
+        if (k.includes('düşük') || k.includes('dusuk') || k.includes('low')) return 1;
+        return 0;
+      }
+      // preserve original indices so focusIssue works after sorting
+      const sorted = (analysis.issues || []).map((it, oi) => ({ it, oi }))
+        .sort((a, b) => sevVal(b.it.severity) - sevVal(a.it.severity));
+      issuesBody.innerHTML = sorted.map(({ it: issue, oi: origIdx }, idx) => `
+        <div class="issue-item" onclick="focusIssue(${origIdx})">
           <span class="issue-severity ${issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-med' : 'sev-low'}"></span>
           <div>
             <div class="issue-text">${escapeHtml(issue.text)}</div>
@@ -2598,8 +2668,20 @@ function refreshAnalyzeView() {
     if (issueCount === 0) {
       list.innerHTML = `<div class="panel-empty">${t('issues.none')}</div>`;
     } else {
-      list.innerHTML = currentAnalysis.issues.map((issue, idx) => `
-        <div class="issue-detail-card" onclick="focusAnalyzeIssue(${idx})">
+      const sevRankMap = { high: 3, medium: 2, low: 1, 'yüksek': 3, 'yuksek': 3, 'orta': 2, 'düşük': 1, 'dusuk': 1 };
+      function sevVal2(s) {
+        const k = String(s || '').toLowerCase().trim();
+        if (!k) return 0;
+        if (sevRankMap[k] !== undefined) return sevRankMap[k];
+        if (k.includes('yüksek') || k.includes('yuksek') || k.includes('high')) return 3;
+        if (k.includes('orta') || k.includes('medium') || k.includes('med')) return 2;
+        if (k.includes('düşük') || k.includes('dusuk') || k.includes('low')) return 1;
+        return 0;
+      }
+      const sortedIssues = (currentAnalysis.issues || []).map((it, oi) => ({ it, oi }))
+        .sort((a, b) => sevVal2(b.it.severity) - sevVal2(a.it.severity));
+      list.innerHTML = sortedIssues.map(({ it: issue, oi: origIdx }, idx) => `
+        <div class="issue-detail-card" onclick="focusAnalyzeIssue(${origIdx})">
           <div class="issue-detail-header">
             <span class="issue-severity ${issue.severity === 'high' ? 'sev-high' : issue.severity === 'medium' ? 'sev-med' : 'sev-low'}"></span>
             <span class="issue-detail-sev-label ${issue.severity === 'high' ? 'sev-label-high' : issue.severity === 'medium' ? 'sev-label-med' : 'sev-label-low'}">${escapeHtml(sevLabel[issue.severity] || issue.severity)}</span>
@@ -3095,11 +3177,46 @@ function updateSuggestionsCompare(forceVisible = false) {
   }
   if (after) {
     if (originalContractText && currentContractText && suggestionsAppliedSet.size > 0) {
-      after.innerHTML = buildTrackChangesHtml(originalContractText, currentContractText);
+      // Build track-changes HTML as before
+      const trackHtml = buildTrackChangesHtml(originalContractText, currentContractText);
+      // If we have the original rendered HTML, try to preserve the original
+      // bold-only title / heading so the modified view keeps the document look.
+      if (originalDocHtml) {
+        const preserved = preserveTitleAndTrackHtml(originalDocHtml, trackHtml);
+        if (preserved) { after.innerHTML = preserved; }
+        else { after.innerHTML = trackHtml; }
+      } else {
+        after.innerHTML = trackHtml;
+      }
     } else if (current) {
       after.innerHTML = current.innerHTML;
     }
   }
+}
+
+// Try to extract a bold-only first paragraph or heading from the original
+// HTML and prepend it to the track-changes HTML so the modified panel keeps
+// the prominent title formatting while retaining inline change markers.
+function preserveTitleAndTrackHtml(originalHtml, trackHtml) {
+  try {
+    // Look for <h1>..</h1> or <p><strong>..</strong></p> or <p><b>..</b></p>
+    const hMatch = originalHtml.match(/<h([1-6])[^>]*>([\s\S]{1,800}?)<\/h\1>/i);
+    if (hMatch) {
+      const titleHtml = hMatch[0];
+      // Insert titleHtml at the start of the trackHtml body
+      const inner = trackHtml.replace(/^<div[^>]*>([\s\S]*)<\/div>$/i, '$1');
+      return `<div class="word-doc-body track-changes-doc">${titleHtml}${inner}</div>`;
+    }
+    const pStrongMatch = originalHtml.match(/<p[^>]*>\s*(<strong[^>]*>[\s\S]{1,800}?<\/strong>|<b[^>]*>[\s\S]{1,800}?<\/b>)\s*<\/p>/i);
+    if (pStrongMatch) {
+      const titleHtml = pStrongMatch[0];
+      const inner = trackHtml.replace(/^<div[^>]*>([\s\S]*)<\/div>$/i, '$1');
+      return `<div class="word-doc-body track-changes-doc">${titleHtml}${inner}</div>`;
+    }
+  } catch (err) {
+    console.warn('preserveTitleAndTrackHtml failed', err);
+  }
+  return null;
 }
 
 // Converts plain contract text → structured HTML preserving headings, sections, centering
