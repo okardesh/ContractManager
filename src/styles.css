@@ -527,37 +527,35 @@ ins.tc-ins {
 body.theme-dark del.tc-del { background: rgba(239,68,68,0.2); color: #f87171; text-decoration-color: #f87171; }
 body.theme-dark ins.tc-ins { background: rgba(16,185,129,0.2); color: #34d399; text-decoration-color: rgba(52,211,153,0.6); }
 .contract-doc.is-rich-doc .word-doc-body {
-  font-size: 13.5px;
-  line-height: 1.8;
-  font-family: 'Georgia', 'Times New Roman', serif;
-  color: var(--text-primary);
+  /* Keep a centered readable max-width and minimal spacing.
+     Do NOT force fonts or line-height here so the rendered
+     HTML (mammoth output / inline styles) can preserve the
+     original Word formatting. */
   max-width: 860px;
   margin: 0 auto;
   padding: 8px 0;
+  color: var(--text-primary);
+}
+/* Word-like white canvas wrapper to preserve document look.
+   Scope to rich doc rendering and compare/modal contexts only to avoid
+   creating large white blocks on the main UI panels. */
+.contract-doc.is-rich-doc .word-doc-body,
+.compare-col .contract-doc .word-doc-body,
+.contract-modal .contract-doc .word-doc-body {
+  /* White canvas only in rich/compare/modal contexts. Keep minimal
+     presentation rules so the source HTML controls headings, fonts,
+     and spacing. We keep padding/background/box-shadow to emulate
+     a document sheet. */
+  background: #ffffff;
+  color: #111827;
+  padding: 24px 28px;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(2,6,23,0.12);
 }
 .contract-doc.is-rich-doc .word-doc-body p,
 .contract-doc.is-rich-doc .word-doc-body li {
   margin-bottom: 10px;
-  text-align: justify;
 }
-.contract-doc.is-rich-doc .word-doc-body h1,
-.contract-doc.is-rich-doc .word-doc-body h2,
-.contract-doc.is-rich-doc .word-doc-body h3,
-.contract-doc.is-rich-doc .word-doc-body h4 {
-  font-family: 'Instrument Sans', sans-serif;
-  font-weight: 700;
-  margin: 20px 0 8px;
-  color: var(--text-primary);
-  text-align: center;
-}
-.contract-doc.is-rich-doc .word-doc-body h1 { font-size: 17px; text-transform: uppercase; letter-spacing: 0.4px; }
-.contract-doc.is-rich-doc .word-doc-body h2 { font-size: 15px; }
-.contract-doc.is-rich-doc .word-doc-body h3 { font-size: 14px; text-align: left; }
-.contract-doc.is-rich-doc .word-doc-body h4 { font-size: 13.5px; text-align: left; }
-.contract-doc.is-rich-doc .word-doc-body strong,
-.contract-doc.is-rich-doc .word-doc-body b { font-weight: 700; }
-.contract-doc.is-rich-doc .word-doc-body em,
-.contract-doc.is-rich-doc .word-doc-body i { font-style: italic; }
 .contract-doc.is-rich-doc .word-doc-body table {
   width: 100%;
   border-collapse: collapse;
@@ -586,6 +584,22 @@ body.theme-dark ins.tc-ins { background: rgba(16,185,129,0.2); color: #34d399; t
   font-size: 14px;
   text-align: left;
   margin-top: 16px;
+}
+
+/* If the document starts with a bold-only paragraph (common for titles),
+   render it as a prominent centered title similar to the DOCX preview. */
+.contract-doc.is-rich-doc .word-doc-body > p:has(> strong:only-child):first-child,
+.contract-doc.is-rich-doc .word-doc-body > p:has(> b:only-child):first-child,
+.contract-viewer .contract-doc .word-doc-body > p:has(> strong:only-child):first-child,
+.contract-modal .contract-doc .word-doc-body > p:has(> strong:only-child):first-child,
+.doc-editor-rich .word-doc-body > p:has(> strong:only-child):first-child {
+  font-size: 26px;
+  line-height: 1.05;
+  text-align: center;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin: 6px 0 18px;
+  letter-spacing: 0.6px;
 }
 .issue-anchor {
   background: rgba(245, 158, 11, 0.24);
@@ -1125,6 +1139,20 @@ body.theme-dark .tag-risk       { background: #4a044e; color: #f5d0fe; }
 .doc-editor-rich .word-doc-body {
   max-width: 920px;
   margin: 0 auto;
+}
+
+/* Make the dashboard viewer and rich HTML editor render using the
+   same white "sheet" treatment as the Archive/modal views so the
+   document appears like a Word page across the app. These are
+   deliberately scoped to container contexts to avoid global
+   white panels elsewhere. */
+.contract-viewer .contract-doc .word-doc-body,
+.doc-editor-rich .word-doc-body {
+  background: #ffffff;
+  color: #111827;
+  padding: 22px 34px;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(2,6,23,0.08);
 }
 
 .doc-editor-rich:focus {
