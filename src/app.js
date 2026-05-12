@@ -115,6 +115,7 @@ function saveArchive() {
     idbPut('archive', {
       id: e.id,
       name: e.name,
+      version: e.version || 1,
       text: (e.text || '').slice(0, 300000),
       html: (e.html || '').slice(0, 300000),
       docxBuffer: e.docxBuffer ? e.docxBuffer.slice(0) : null,
@@ -530,6 +531,8 @@ const TRANSLATIONS = {
 
 let currentLang = 'tr';
 let currentTheme = 'system';
+const SIDEBAR_COLLAPSE_STORAGE_KEY = 'clauseai-sidebar-collapsed';
+let isSidebarCollapsed = false;
 
 function t(key) {
   return TRANSLATIONS[currentLang][key] ?? TRANSLATIONS['en'][key] ?? key;
@@ -552,6 +555,32 @@ function setLang(lang) {
   refreshDynamicLocalizedSections();
   updateContractViewerToggleLabel();
   updateThemeSwitchUI();
+  updateSidebarToggleButton();
+}
+
+function updateSidebarToggleButton() {
+  const btn = document.getElementById('sidebar-toggle-btn');
+  if (!btn) return;
+  const collapseLabel = currentLang === 'tr' ? 'Sol paneli daralt' : 'Collapse left panel';
+  const expandLabel = currentLang === 'tr' ? 'Sol paneli aç' : 'Open left panel';
+  const label = isSidebarCollapsed ? expandLabel : collapseLabel;
+  btn.textContent = isSidebarCollapsed ? '☰' : '⇤';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('aria-expanded', String(!isSidebarCollapsed));
+}
+
+function setSidebarCollapsed(collapsed, { persist = true } = {}) {
+  isSidebarCollapsed = !!collapsed;
+  document.body.classList.toggle('sidebar-collapsed', isSidebarCollapsed);
+  updateSidebarToggleButton();
+  if (persist) {
+    localStorage.setItem(SIDEBAR_COLLAPSE_STORAGE_KEY, isSidebarCollapsed ? '1' : '0');
+  }
+}
+
+function toggleSidebar() {
+  setSidebarCollapsed(!isSidebarCollapsed);
 }
 
 function refreshArchiveSearchUiTexts() {
@@ -776,46 +805,169 @@ function tokenizeText(text) {
 }
 
 function buildTrackChangesHtml(oldText, newText) {
+  return buildStructuredTrackChangesHtml(oldText, newText);
+}
+
+function buildFlexibleTextRegex(text) {
+  const escaped = escapeRegExp(String(text || '').trim());
+  if (!escaped) return null;
+  return new RegExp(escaped.replace(/\s+/g, '\\s+'), 'i');
+}
+
+function replaceFirstRegexInTextNodesWithHtml(root, pattern, replacementHtml) {
+  if (!root || !pattern) return false;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const val = node.nodeValue || '';
+    const match = val.match(pattern);
+    if (!match) continue;
+
+    const start = match.index || 0;
+    const end = start + match[0].length;
+    const before = val.slice(0, start);
+    const after = val.slice(end);
+    const parent = node.parentNode;
+    if (!parent) return false;
+
+    if (before) parent.insertBefore(document.createTextNode(before), node);
+
+    const fragWrap = document.createElement('span');
+    fragWrap.innerHTML = replacementHtml;
+    while (fragWrap.firstChild) parent.insertBefore(fragWrap.firstChild, node);
+
+    if (after) parent.insertBefore(document.createTextNode(after), node);
+    parent.removeChild(node);
+    return true;
+  }
+  return false;
+}
+
+function buildTrackChangesOnRenderedHtml(renderedHtml, oldText, newText) {
+  if (!renderedHtml || !oldText || !newText) {
+    return buildStructuredTrackChangesHtml(oldText || '', newText || '');
+  }
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = renderedHtml;
+
+  // Rich HTML fallback markup root
+  const wordBody = wrap.querySelector('.word-doc-body');
+  if (wordBody) wordBody.classList.add('track-changes-doc');
+
+  const oldLines = String(oldText || '').split('\n');
+  const newLines = String(newText || '').split('\n');
+  const lineOps = lcsDiff(oldLines, newLines);
+
+  let i = 0;
+  while (i < lineOps.length) {
+    if (lineOps[i].type === 'equal') { i++; continue; }
+
+    const delLines = [];
+    const insLines = [];
+    while (i < lineOps.length && lineOps[i].type === 'delete') { delLines.push(lineOps[i].value); i++; }
+    while (i < lineOps.length && lineOps[i].type === 'insert') { insLines.push(lineOps[i].value); i++; }
+
+    const delBlock = delLines.join('\n').trim();
+    const insBlock = insLines.join('\n').trim();
+
+    if (!insBlock) continue;
+
+    // Prefer replacement marker (<del>old</del><ins>new</ins>) when both sides exist.
+    const replacementHtml = delBlock
+      ? `<del class="tc-del">${escapeHtml(delBlock)}</del><ins class="tc-ins">${escapeHtml(insBlock)}</ins>`
+      : `<ins class="tc-ins">${escapeHtml(insBlock)}</ins>`;
+
+    let applied = false;
+    const fullPattern = buildFlexibleTextRegex(insBlock);
+    if (fullPattern) applied = replaceFirstRegexInTextNodesWithHtml(wrap, fullPattern, replacementHtml);
+
+    // Fallback: match on a shorter snippet when full line differs in whitespace/punctuation.
+    if (!applied) {
+      const shortSnippet = insBlock.split(/\s+/).slice(0, 8).join(' ').trim();
+      const shortPattern = buildFlexibleTextRegex(shortSnippet);
+      if (shortPattern && shortSnippet) {
+        const shortReplacement = delBlock
+          ? `<del class="tc-del">${escapeHtml(delBlock)}</del><ins class="tc-ins">${escapeHtml(shortSnippet)}</ins>`
+          : `<ins class="tc-ins">${escapeHtml(shortSnippet)}</ins>`;
+        replaceFirstRegexInTextNodesWithHtml(wrap, shortPattern, shortReplacement);
+      }
+    }
+  }
+
+  return wrap.innerHTML;
+}
+
+// Produces properly structured HTML (headings, paragraphs) with inline <ins>/<del>
+// change markers — combining the formatting of contractTextToStructuredHtml with the
+// diff logic of the old flat track-changes renderer.
+function buildStructuredTrackChangesHtml(oldText, newText) {
   if (!oldText || !newText) {
-    return `<div class="word-doc-body track-changes-doc">${escapeHtml(newText || '')}</div>`;
+    return `<div class="word-doc-body">${contractTextToStructuredHtml(newText || '')}</div>`;
   }
 
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
-  const lineOps = lcsDiff(oldLines, newLines);
+  const lineOps  = lcsDiff(oldLines, newLines);
 
-  let html = '<div class="word-doc-body track-changes-doc">';
+  // Detect structure of a line — returns the tag name and whether it is a title
+  function lineTag(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    const letters      = trimmed.replace(/[^a-zA-ZÇĞİÖŞÜçğışöü]/g, '');
+    const upperLetters = trimmed.replace(/[^A-ZÇĞİÖŞÜ]/g, '');
+    const upperRatio   = letters.length ? upperLetters.length / letters.length : 0;
+    const isMostlyCaps = upperRatio >= 0.75 && /[A-ZÇĞİÖŞÜ]/.test(trimmed);
+    if (isMostlyCaps && trimmed.length > 10) return 'h1';
+    if (isMostlyCaps && trimmed.length <= 120) return 'h2';
+    if (/^\d+(\.\d+)*[.)\s]\s+\S/.test(trimmed) && trimmed.length <= 120) return 'h3';
+    return 'p';
+  }
+
+  function wrapLine(rawText, innerHtml) {
+    const tag = lineTag(rawText);
+    if (!tag) return '';
+    const style = tag === 'h1' ? ' style="text-align:center"' : '';
+    return `<${tag}${style}>${innerHtml}</${tag}>`;
+  }
+
+  let html = '<div class="word-doc-body">';
   let i = 0;
   while (i < lineOps.length) {
     const op = lineOps[i];
     if (op.type === 'equal') {
-      html += escapeHtml(op.value) + '\n';
+      const trimmed = op.value.trim();
+      if (trimmed) html += wrapLine(op.value, escapeHtml(trimmed));
       i++;
     } else {
-      // Collect a run of del/ins lines
       const delLines = [];
       const insLines = [];
       while (i < lineOps.length && lineOps[i].type === 'delete') { delLines.push(lineOps[i].value); i++; }
       while (i < lineOps.length && lineOps[i].type === 'insert') { insLines.push(lineOps[i].value); i++; }
 
       if (delLines.length > 0 && insLines.length > 0) {
-        // Replaced block — do word-level diff
+        // Replacement — inline word-level diff, structured as the new line
         const oldWords = tokenizeText(delLines.join('\n'));
         const newWords = tokenizeText(insLines.join('\n'));
-        const wordOps = (oldWords.length * newWords.length > 150000)
+        const wordOps  = (oldWords.length * newWords.length > 150000)
           ? [{ type: 'delete', value: delLines.join('\n') }, { type: 'insert', value: insLines.join('\n') }]
           : lcsDiff(oldWords, newWords);
+        let inner = '';
         for (const wop of wordOps) {
           const v = escapeHtml(wop.value);
-          if (wop.type === 'equal')  html += v;
-          else if (wop.type === 'delete') html += `<del class="tc-del">${v}</del>`;
-          else                            html += `<ins class="tc-ins">${v}</ins>`;
+          if      (wop.type === 'equal')  inner += v;
+          else if (wop.type === 'delete') inner += `<del class="tc-del">${v}</del>`;
+          else                            inner += `<ins class="tc-ins">${v}</ins>`;
         }
-        html += '\n';
+        html += wrapLine(insLines.join('\n'), inner);
       } else if (delLines.length > 0) {
-        html += `<del class="tc-del">${escapeHtml(delLines.join('\n'))}</del>\n`;
+        for (const dl of delLines) {
+          if (dl.trim()) html += wrapLine(dl, `<del class="tc-del">${escapeHtml(dl.trim())}</del>`);
+        }
       } else {
-        html += `<ins class="tc-ins">${escapeHtml(insLines.join('\n'))}</ins>\n`;
+        for (const il of insLines) {
+          if (il.trim()) html += wrapLine(il, `<ins class="tc-ins">${escapeHtml(il.trim())}</ins>`);
+        }
       }
     }
   }
@@ -2195,11 +2347,13 @@ async function applyDocumentEdit(suggestion) {
     originalContractText = currentContractText || '';
   }
 
+  const previousContractText = currentContractText || '';
+
   const modified = await applyWithLLM(suggestion);
 
   if (modified && modified.trim() !== (currentContractText || '').trim()) {
     // ── LLM succeeded: try to apply minimal DOM-preserving edits first
-    const appliedMinimal = tryApplyMinimalDomEdits(docEl, originalContractText || '', modified);
+    const appliedMinimal = tryApplyMinimalDomEdits(docEl, previousContractText, modified);
     currentContractText = modified;
     currentContractDocxBuffer = null; // avoid showing stale original DOCX after edits
 
@@ -2219,8 +2373,8 @@ async function applyDocumentEdit(suggestion) {
       syncContractViewerModal();
       saveSession();
     } else {
-      // Fallback: render flat formatted AI text (legacy behavior)
-      currentContractHtml = formatAiMessage(modified);
+      // Fallback: keep structured formatting as much as possible
+      currentContractHtml = contractTextToStructuredHtml(modified);
       // Dashboard contract-doc
       docEl.classList.remove('is-docx');
       docEl.classList.add('is-rich-doc');
@@ -2992,13 +3146,13 @@ function refreshArchiveView() {
         const versionBadge = totalVersions > 1
           ? `<span class="archive-version-badge" onclick="event.stopPropagation(); toggleArchiveVersions('${escapeHtml(normalizeArchiveComparableText(le.name))}')" title="${totalVersions} versions">${totalVersions} versions ▾</span>`
           : '';
-        // Version picker (hidden by default)
+        // Version picker (hidden by default) — display oldest first (v1) to newest (vN)
         const versionPicker = totalVersions > 1 ? `
           <div class="archive-version-picker" id="avp-${escapeHtml(normalizeArchiveComparableText(le.name))}" style="display:none">
-            ${versions.map(({ entry: ve, idx: vi }) => {
+            ${[...versions].reverse().map(({ entry: ve, idx: vi }, i) => {
               const vd = ve.archivedAt instanceof Date ? ve.archivedAt : new Date(ve.archivedAt);
               const vDate = vd.toLocaleString(currentLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-              const vNum = ve.version || 1;
+              const vNum = i + 1; // oldest=v1, newest=vN
               return `<div class="archive-version-item ${activeArchivedIndex === vi ? 'active' : ''}" onclick="event.stopPropagation(); openArchivedContract(${vi})">
                 <span class="archive-version-num">v${vNum}</span>
                 <span class="archive-version-date">${escapeHtml(vDate)}</span>
@@ -3227,18 +3381,12 @@ function updateSuggestionsCompare(forceVisible = false) {
     else if (current) before.innerHTML = current.innerHTML;
   }
   if (after) {
-    if (originalContractText && currentContractText && suggestionsAppliedSet.size > 0) {
-      // Build track-changes HTML as before
-      const trackHtml = buildTrackChangesHtml(originalContractText, currentContractText);
-      // If we have the original rendered HTML, try to preserve the original
-      // bold-only title / heading so the modified view keeps the document look.
-      if (originalDocHtml) {
-        const preserved = preserveTitleAndTrackHtml(originalDocHtml, trackHtml);
-        if (preserved) { after.innerHTML = preserved; }
-        else { after.innerHTML = trackHtml; }
-      } else {
-        after.innerHTML = trackHtml;
-      }
+    if (suggestionsAppliedSet.size > 0 && originalContractText && currentContractText && current) {
+      // Keep rendered formatting close to original, and overlay diff markers.
+      after.innerHTML = buildTrackChangesOnRenderedHtml(current.innerHTML, originalContractText, currentContractText);
+    } else if (suggestionsAppliedSet.size > 0 && originalContractText && currentContractText) {
+      // Safety fallback
+      after.innerHTML = buildStructuredTrackChangesHtml(originalContractText, currentContractText);
     } else if (current) {
       after.innerHTML = current.innerHTML;
     }
@@ -3713,6 +3861,8 @@ function setLoading(on) {
 //  Init
 // ===========================
 document.addEventListener('DOMContentLoaded', async () => {
+  const sidebarPref = localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === '1';
+  setSidebarCollapsed(sidebarPref, { persist: false });
   applyTheme(getInitialTheme(), false);
   // Restore saved model preference
   const savedModel = localStorage.getItem('clauseai-model');

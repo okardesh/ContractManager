@@ -47,6 +47,11 @@ body {
   grid-template-columns: 260px 1fr;
   grid-template-rows: 56px 1fr;
   min-height: 100vh;
+  transition: grid-template-columns 0.22s ease;
+}
+
+body.sidebar-collapsed .app {
+  grid-template-columns: 0 1fr;
 }
 
 /* ---- Header ---- */
@@ -58,6 +63,25 @@ body {
   align-items: center;
   padding: 0 24px;
   gap: 12px;
+}
+.sidebar-toggle-btn {
+  width: 30px;
+  height: 30px;
+  border: 0.5px solid var(--border-mid);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.sidebar-toggle-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 .logo-image {
   height: 42px;
@@ -198,6 +222,16 @@ body.theme-dark .logo-image {
   border-right: 0.5px solid var(--border-light);
   padding: 20px 0;
   overflow-y: auto;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+body.sidebar-collapsed .sidebar {
+  opacity: 0;
+  transform: translateX(-12px);
+  pointer-events: none;
+  overflow: hidden;
+  border-right: none;
 }
 .sidebar-section { padding: 0 16px; margin-bottom: 24px; }
 .sidebar-label {
@@ -502,7 +536,6 @@ body.theme-dark .logo-image {
   line-height: 1.75;
 }
 .track-changes-doc {
-  white-space: pre-wrap;
   font-family: 'Instrument Sans', sans-serif;
   font-size: 14px;
   line-height: 1.75;
@@ -540,7 +573,6 @@ body.theme-dark ins.tc-ins { background: rgba(16,185,129,0.2); color: #34d399; t
    Scope to rich doc rendering and compare/modal contexts only to avoid
    creating large white blocks on the main UI panels. */
 .contract-doc.is-rich-doc .word-doc-body,
-.compare-col .contract-doc .word-doc-body,
 .contract-modal .contract-doc .word-doc-body {
   /* White canvas only in rich/compare/modal contexts. Keep minimal
      presentation rules so the source HTML controls headings, fonts,
@@ -551,6 +583,31 @@ body.theme-dark ins.tc-ins { background: rgba(16,185,129,0.2); color: #34d399; t
   padding: 24px 28px;
   border-radius: 8px;
   box-shadow: 0 16px 40px rgba(2,6,23,0.12);
+}
+
+/* Suggestions compare: avoid double white layer behind document content */
+.suggestions-compare .compare-col .contract-doc .word-doc-body {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* In Suggestions 'Modified' panel, show track-changes on a white page like Original */
+.suggestions-compare .compare-col .contract-doc .word-doc-body.track-changes-doc {
+  background: #ffffff;
+  color: #111827;
+  padding: 22px 34px;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(2,6,23,0.08);
+}
+
+/* Dashboard viewer: same fix (remove inner white page layer) */
+.contract-viewer .contract-doc.is-rich-doc .word-doc-body {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
 }
 .contract-doc.is-rich-doc .word-doc-body p,
 .contract-doc.is-rich-doc .word-doc-body li {
@@ -1144,18 +1201,16 @@ body.theme-dark .tag-risk       { background: #4a044e; color: #f5d0fe; }
   margin: 0 auto;
 }
 
-/* Make the dashboard viewer and rich HTML editor render using the
-   same white "sheet" treatment as the Archive/modal views so the
-   document appears like a Word page across the app. These are
-   deliberately scoped to container contexts to avoid global
-   white panels elsewhere. */
+/* Dashboard + Analyze: avoid nested white sheet layer inside viewer/editor.
+   The container already has its own panel background, so inner canvas causes
+   an extra white rectangle and wasted space. */
 .contract-viewer .contract-doc .word-doc-body,
 .doc-editor-rich .word-doc-body {
-  background: #ffffff;
-  color: #111827;
-  padding: 22px 34px;
-  border-radius: 8px;
-  box-shadow: 0 16px 40px rgba(2,6,23,0.08);
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .doc-editor-rich:focus {
